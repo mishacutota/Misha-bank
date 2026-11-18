@@ -1,33 +1,38 @@
-/* Общая база MISHA CARDS: GitHub Pages + бесплатное хранилище textdb.online.
-   Все игроки читают и пишут одну общую коллекцию, поэтому переводы идут между разными людьми
-   и разными браузерами. Сервис не требует регистрации и отдаёт CORS для GitHub Pages. */
+/* Общая база MISHA BANK: своя валюта «@» (собаки). Все игроки читают и пишут одну общую базу,
+   поэтому переводы идут между разными людьми и разными браузерами. Сервис textdb.online
+   не требует регистрации и отдаёт CORS для GitHub Pages. */
 (function () {
   'use strict';
 
-  const STORAGE_KEY = 'misha-cards-v2';
-  const SHARED_KEY = 'misha-cards-shared-9f4c1a7b3e';
+  const STORAGE_KEY = 'misha-bank-v3';
+  const SHARED_KEY = 'misha-bank-shared-v3-7a2c9e1d';
   const WRITE_URL = 'https://textdb.online/update';
   const READ_URL = 'https://textdb.online/' + SHARED_KEY;
-  const STARTER = { puff: 2, frog: 1, fox: 1 };
-  const DAILY_CARDS = 3;
+  const STARTER_BALANCE = 1000;
+  const DAILY_BONUS = 500;
   const DAY_MS = 24 * 60 * 60 * 1000;
-  const INITIAL_STOCK = Object.fromEntries(window.BANK_CARDS.map(card => [card.id, card.limit]));
 
   function createEmptyDb() {
-    return { version: 2, rev: 0, users: {}, stock: { ...INITIAL_STOCK }, history: [] };
-  }
-
-  function normalizeInventory(input) {
-    const inventory = {};
-    for (const card of window.BANK_CARDS) {
-      const amount = Number(input && input[card.id]);
-      inventory[card.id] = Number.isInteger(amount) && amount > 0 ? Math.min(amount, card.limit) : 0;
-    }
-    return inventory;
+    return { version: 3, rev: 0, users: {}, history: [] };
   }
 
   function normalizeNick(nick) {
     return String(nick || '').trim().toLowerCase();
+  }
+
+  function normalizeUser(user, fallbackNick) {
+    const nick = (user && typeof user.nick === 'string' && user.nick.trim()) ? user.nick.trim() : (fallbackNick || '');
+    const key = normalizeNick(nick);
+    if (!key) return null;
+    const balance = Number(user && user.balance);
+    return {
+      nick: nick,
+      pin: typeof user.pin === 'string' ? user.pin : '',
+      createdAt: Number.isFinite(user && user.createdAt) ? user.createdAt : Date.now(),
+      balance: Number.isFinite(balance) && balance >= 0 ? Math.floor(balance) : 0,
+      lastDailyAt: Number.isFinite(user && user.lastDailyAt) ? user.lastDailyAt : 0,
+      recentRecipients: Array.isArray(user && user.recentRecipients) ? user.recentRecipients.filter(v => typeof v === 'string').slice(0, 3) : []
+    };
   }
 
   function normalizeDb(value) {
@@ -36,33 +41,31 @@
     const db = createEmptyDb();
     db.rev = Number.isFinite(raw.rev) ? raw.rev : 0;
     if (!raw.users || typeof raw.users !== 'object') raw.users = {};
-    if (!raw.stock || typeof raw.stock !== 'object') raw.stock = {};
-    for (const card of window.BANK_CARDS) {
-      const r = Number(raw.stock[card.id]);
-      db.stock[card.id] = Number.isInteger(r) && r >= 0 ? Math.min(r, card.limit) : card.limit;
-    }
-    for (const [key, user] of Object.entries(raw.users)) {
+    for (const [, user] of Object.entries(raw.users)) {
       if (!user || typeof user !== 'object' || typeof user.nick !== 'string') continue;
       const normalizedKey = normalizeNick(user.nick);
       if (!normalizedKey) continue;
-      db.users[normalizedKey] = {
-        nick: user.nick,
-        pin: typeof user.pin === 'string' ? user.pin : '',
-        createdAt: Number.isFinite(user.createdAt) ? user.createdAt : Date.now(),
-        inventory: normalizeInventory(user.inventory),
-        lastDailyAt: Number.isFinite(user.lastDailyAt) ? user.lastDailyAt : 0,
-        recentRecipients: Array.isArray(user.recentRecipients) ? user.recentRecipients.filter(v => typeof v === 'string').slice(0, 3) : []
-      };
+      // Мягкая миграция старых данных: если есть inventory, считаем искорки как @.
+      let migratedUser = user;
+      if (!Number.isFinite(user.balance) && user.inventory && typeof user.inventory === 'object') {
+        // старые карточки: приблизительная конвертация не нужна — новая база пустая по ключу
+      }
+      const normalized = normalizeUser(migratedUser, user.nick);
+      if (normalized) db.users[normalizedKey] = normalized;
     }
     db.history = Array.isArray(raw.history)
-      ? raw.history.filter(item => item && typeof item === 'object').slice(-500).map(item => ({
-          at: Number.isFinite(item.at) ? item.at : Date.now(),
-          type: ['in', 'out', 'daily', 'mint'].includes(item.type) ? item.type : 'in',
-          userKey: String(item.userKey || ''),
-          peer: String(item.peer || ''),
-          cards: normalizeInventory(item.cards),
-          memo: typeof item.memo === 'string' ? item.memo.slice(0, 80) : ''
-        }))
+      ? raw.history.filter(item => item && typeof item === 'object').slice(-500).map(item => {
+          const amt = Number(item.amount);
+          // старый формат мог хранить cards; игнорируем, берём amount
+          return {
+            at: Number.isFinite(item.at) ? item.at : Date.now(),
+            type: ['in', 'out', 'daily', 'mint'].includes(item.type) ? item.type : 'in',
+            userKey: String(item.userKey || ''),
+            peer: String(item.peer || ''),
+            amount: Number.isFinite(amt) && amt > 0 ? Math.floor(amt) : 0,
+            memo: typeof item.memo === 'string' ? item.memo.slice(0, 80) : ''
+          };
+        })
       : [];
     return db;
   }
@@ -74,14 +77,17 @@
   function saveLocal() { /* no-op: app is online-only */ }
   function loadLocal() { return null; }
 
-  // Чтение общей базы. textdb.online кэшируется через Cloudflare, поэтому
-  // добавляем параметр-обходчик кэша и не полагаемся на HTTP-кэш браузера.
   async function pull() {
     try {
       const res = await fetch(READ_URL + '?t=' + Date.now(), { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const text = await res.text();
-      if (!text || !text.trim()) throw new Error('Общая база пока пуста');
+      if (!text || !text.trim()) {
+        db = createEmptyDb();
+        online = true;
+        lastError = '';
+        return true;
+      }
       let json;
       try { json = JSON.parse(text); } catch (_) { throw new Error('Общая база вернула не JSON'); }
       db = normalizeDb(json);
@@ -96,8 +102,6 @@
     }
   }
 
-  // Запись общей базы. Отправляем форму (application/x-www-form-urlencoded) —
-  // такой запрос не требует CORS-preflight, поэтому работает с GitHub Pages.
   async function push() {
     try {
       const body = new URLSearchParams();
@@ -125,8 +129,6 @@
     }
   }
 
-  // textdb.online обновляет запись через CDN с задержкой, поэтому после
-  // записи перечитываем базу и убеждаемся, что наш rev действительно сохранился.
   async function verifyWrite(expectedRev, tries) {
     tries = tries || 4;
     for (let i = 0; i < tries; i++) {
@@ -169,12 +171,15 @@
     return { ok: false, error: 'Общая база не ответила. Проверь интернет и попробуй снова.' };
   }
 
-  function total(inventory) {
-    return window.BANK_CARDS.reduce((sum, card) => sum + card.spark * (inventory[card.id] || 0), 0);
+  function total(value) {
+    if (typeof value === 'number') return value;
+    if (value && typeof value.balance === 'number') return value.balance;
+    return 0;
   }
 
-  function countCards(inventory) {
-    return window.BANK_CARDS.reduce((sum, card) => sum + (inventory[card.id] || 0), 0);
+  function countCards(value) {
+    // совместимость: количество «единиц» = сумма
+    return total(value);
   }
 
   function addHistory(entry) {
@@ -186,7 +191,7 @@
     return {
       nick: user.nick,
       createdAt: user.createdAt,
-      inventory: { ...user.inventory },
+      balance: user.balance,
       lastDailyAt: user.lastDailyAt || 0,
       recentRecipients: Array.isArray(user.recentRecipients) ? user.recentRecipients.slice(0, 3) : []
     };
@@ -195,30 +200,12 @@
   function issueDaily(userKey) {
     const user = db.users[normalizeNick(userKey)];
     if (!user || (user.lastDailyAt && Date.now() - user.lastDailyAt < DAY_MS)) {
-      return { ok: true, cards: {}, issued: 0, nextAt: user ? (user.lastDailyAt || 0) + DAY_MS : 0 };
+      return { ok: true, amount: 0, issued: 0, nextAt: user ? (user.lastDailyAt || 0) + DAY_MS : 0 };
     }
-
-    const daily = {};
-    for (let draw = 0; draw < DAILY_CARDS; draw++) {
-      const active = window.BANK_CARDS.filter(card => db.stock[card.id] > 0);
-      if (!active.length) break;
-      const totalWeight = active.reduce((sum, card) => sum + (window.RARITY_WEIGHT[card.rarityKey] || 1), 0);
-      let ticket = Math.random() * totalWeight;
-      let picked = active[active.length - 1];
-      for (const card of active) {
-        ticket -= window.RARITY_WEIGHT[card.rarityKey] || 1;
-        if (ticket < 0) { picked = card; break; }
-      }
-      user.inventory[picked.id] += 1;
-      daily[picked.id] = (daily[picked.id] || 0) + 1;
-      db.stock[picked.id] -= 1;
-    }
-
+    user.balance += DAILY_BONUS;
     user.lastDailyAt = Date.now();
-    if (countCards(daily)) {
-      addHistory({ type: 'daily', userKey, peer: '', cards: daily, memo: 'Ежедневный дроп' });
-    }
-    return { ok: true, cards: daily, issued: countCards(daily), nextAt: user.lastDailyAt + DAY_MS };
+    addHistory({ type: 'daily', userKey, peer: '', amount: DAILY_BONUS, memo: 'Ежедневный бонус' });
+    return { ok: true, amount: DAILY_BONUS, issued: DAILY_BONUS, nextAt: user.lastDailyAt + DAY_MS };
   }
 
   async function register(nick, pin) {
@@ -231,15 +218,9 @@
 
     return withLatest(() => {
       if (db.users[key]) return { ok: false, error: 'Этот ник уже занят. Придумай другой.' };
-      const inventory = normalizeInventory(STARTER);
-      for (const card of window.BANK_CARDS) {
-        const granted = Math.min(inventory[card.id], db.stock[card.id]);
-        inventory[card.id] = granted;
-        db.stock[card.id] -= granted;
-      }
-       const user = { nick: clean, pin: String(pin), createdAt: Date.now(), inventory, lastDailyAt: 0, recentRecipients: [] };
+      const user = { nick: clean, pin: String(pin), createdAt: Date.now(), balance: STARTER_BALANCE, lastDailyAt: 0, recentRecipients: [] };
       db.users[key] = user;
-      addHistory({ type: 'mint', userKey: key, peer: '', cards: { ...inventory }, memo: 'Стартовая коллекция' });
+      addHistory({ type: 'mint', userKey: key, peer: '', amount: STARTER_BALANCE, memo: 'Стартовый баланс' });
       const daily = issueDaily(key);
       if (!daily.ok) return { ok: false, error: daily.error };
       return { ok: true, user: publicUser(user), key, daily };
@@ -248,18 +229,18 @@
 
   async function login(nick, pin) {
     const key = normalizeNick(nick);
-    // Специальный вход администратора
     if (key === 'admin' && String(pin) === '9898') {
       return withLatest(() => {
         if (!db.users.admin) {
-          db.users.admin = { nick: 'admin', pin: '9898', createdAt: Date.now(), inventory: normalizeInventory({}), lastDailyAt: Date.now(), recentRecipients: [] };
+          db.users.admin = { nick: 'admin', pin: '9898', createdAt: Date.now(), balance: 0, lastDailyAt: Date.now(), recentRecipients: [] };
         } else {
           db.users.admin.pin = '9898';
           db.users.admin.nick = 'admin';
           if (!Array.isArray(db.users.admin.recentRecipients)) db.users.admin.recentRecipients = [];
+          if (!Number.isFinite(db.users.admin.balance)) db.users.admin.balance = 0;
         }
         const admin = db.users.admin;
-        return { ok: true, user: publicUser(admin), key: 'admin', daily: { ok: true, cards: {}, issued: 0, nextAt: admin.lastDailyAt + DAY_MS } };
+        return { ok: true, user: publicUser(admin), key: 'admin', daily: { ok: true, amount: 0, issued: 0, nextAt: admin.lastDailyAt + DAY_MS } };
       });
     }
     return withLatest(() => {
@@ -292,11 +273,11 @@
     return user ? { key, ...publicUser(user) } : null;
   }
 
-  function getStock() { return { ...db.stock }; }
+  function getStock() { return {}; }
 
   function getLeaderboard() {
     return Object.entries(db.users)
-      .map(([key, user]) => ({ key, nick: user.nick, value: total(user.inventory) }))
+      .map(([key, user]) => ({ key, nick: user.nick, value: user.balance }))
       .sort((a, b) => b.value - a.value || a.nick.localeCompare(b.nick))
       .slice(0, 10);
   }
@@ -306,31 +287,24 @@
     return db.history.filter(item => item.userKey === normalized).slice(-40).reverse();
   }
 
-  async function transfer(fromKey, targetNick, requested) {
+  async function transfer(fromKey, targetNick, amount) {
     const targetKey = normalizeNick(targetNick);
+    const amt = Number(amount);
+    if (!Number.isInteger(amt) || amt <= 0) return { ok: false, error: 'Укажи положительную сумму.' };
     return withLatest(() => {
       const sender = db.users[normalizeNick(fromKey)];
       const recipient = db.users[targetKey];
       if (!sender) return { ok: false, error: 'Не удалось найти твой профиль.' };
       if (!recipient) return { ok: false, error: 'Такого игрока нет. Проверь ник.' };
-      if (targetKey === normalizeNick(fromKey)) return { ok: false, error: 'Нельзя отправить карточки самому себе.' };
-
-      const move = normalizeInventory(requested);
-      const count = countCards(move);
-      if (!count) return { ok: false, error: 'Выбери хотя бы одну карточку.' };
-      for (const card of window.BANK_CARDS) {
-        if (move[card.id] > sender.inventory[card.id]) return { ok: false, error: `У тебя недостаточно карточек «${card.name}».` };
-      }
-      for (const card of window.BANK_CARDS) {
-        sender.inventory[card.id] -= move[card.id];
-        recipient.inventory[card.id] += move[card.id];
-      }
-      const spark = total(move);
-      addHistory({ type: 'out', userKey: normalizeNick(fromKey), peer: recipient.nick, cards: { ...move }, memo: 'Подарок' });
-      addHistory({ type: 'in', userKey: targetKey, peer: sender.nick, cards: { ...move }, memo: 'Подарок' });
+      if (targetKey === normalizeNick(fromKey)) return { ok: false, error: 'Нельзя перевести @ самому себе.' };
+      if (sender.balance < amt) return { ok: false, error: 'Недостаточно @ на балансе.' };
+      sender.balance -= amt;
+      recipient.balance += amt;
+      addHistory({ type: 'out', userKey: normalizeNick(fromKey), peer: recipient.nick, amount: amt, memo: 'Перевод' });
+      addHistory({ type: 'in', userKey: targetKey, peer: sender.nick, amount: amt, memo: 'Перевод' });
       if (!Array.isArray(sender.recentRecipients)) sender.recentRecipients = [];
       sender.recentRecipients = [recipient.nick, ...sender.recentRecipients.filter(n => normalizeNick(n) !== targetKey)].slice(0, 3);
-      return { ok: true, recipient: recipient.nick, spark, cards: move };
+      return { ok: true, recipient: recipient.nick, amount: amt };
     });
   }
 
@@ -357,8 +331,9 @@
       key,
       nick: user.nick,
       createdAt: user.createdAt,
-      cards: countCards(user.inventory),
-      sparks: total(user.inventory)
+      balance: user.balance,
+      sparks: user.balance,
+      cards: 0
     })).sort((a, b) => a.nick.localeCompare(b.nick));
   }
 
@@ -372,13 +347,9 @@
     });
   }
 
-  async function grantCards(target, requested) {
-    const move = {};
-    for (const card of window.BANK_CARDS) {
-      const amt = Number(requested && requested[card.id]);
-      move[card.id] = Number.isInteger(amt) && amt > 0 ? amt : 0;
-    }
-    if (!countCards(move)) return { ok: false, error: 'Выбери карточки для выдачи.' };
+  async function grantBalance(target, amount) {
+    const amt = Number(amount);
+    if (!Number.isInteger(amt) || amt <= 0) return { ok: false, error: 'Укажи положительную сумму.' };
     return withLatest(() => {
       const targetKey = normalizeNick(target);
       const targets = (targetKey === 'all' || target === 'Всем' || target === 'all')
@@ -387,41 +358,41 @@
       if (!targets) return { ok: false, error: 'Пользователь не найден.' };
       for (const key of targets) {
         const user = db.users[key];
-        if (!user.inventory) user.inventory = normalizeInventory({});
-        for (const card of window.BANK_CARDS) {
-          if (move[card.id]) user.inventory[card.id] = (user.inventory[card.id] || 0) + move[card.id];
-        }
-        addHistory({ type: 'in', userKey: key, peer: 'admin', cards: { ...move }, memo: 'Выдача от админа' });
+        if (!user) continue;
+        if (!Number.isFinite(user.balance)) user.balance = 0;
+        user.balance += amt;
+        addHistory({ type: 'in', userKey: key, peer: 'admin', amount: amt, memo: 'Выдача от админа' });
       }
       return { ok: true, count: targets.length };
     });
   }
 
-  async function adjustUserCards(targetNick, cardId, amount, mode) {
-    const card = window.BANK_CARDS.find(item => item.id === cardId);
-    if (!card) return { ok: false, error: 'Карточка не найдена.' };
+  async function adjustUserBalance(targetNick, amount, mode) {
     const requested = Number(amount);
     if (!Number.isInteger(requested) || requested <= 0) {
-      return { ok: false, error: 'Укажи положительное число карточек.' };
+      return { ok: false, error: 'Укажи положительное число.' };
     }
     return withLatest(() => {
       const key = normalizeNick(targetNick);
       const user = db.users[key];
       if (!user) return { ok: false, error: 'Пользователь не найден.' };
-      if (!user.inventory || typeof user.inventory !== 'object') user.inventory = normalizeInventory({});
-      const current = user.inventory[cardId] || 0;
+      if (!Number.isFinite(user.balance)) user.balance = 0;
       if (mode === 'add') {
-        user.inventory[cardId] = current + requested;
-        addHistory({ type: 'in', userKey: key, peer: 'admin', cards: { [cardId]: requested }, memo: 'Выдача от админа' });
+        user.balance += requested;
+        addHistory({ type: 'in', userKey: key, peer: 'admin', amount: requested, memo: 'Выдача от админа' });
         return { ok: true, adjusted: requested, removedMax: false };
       }
-      const removed = Math.min(requested, current);
-      if (removed <= 0) return { ok: false, error: 'У игрока нет таких карточек.' };
-      user.inventory[cardId] = current - removed;
-      addHistory({ type: 'out', userKey: key, peer: 'admin', cards: { [cardId]: removed }, memo: 'Изъятие админом' });
+      const removed = Math.min(requested, user.balance);
+      if (removed <= 0) return { ok: false, error: 'У игрока нет средств.' };
+      user.balance -= removed;
+      addHistory({ type: 'out', userKey: key, peer: 'admin', amount: removed, memo: 'Изъятие админом' });
       return { ok: true, adjusted: removed, removedMax: removed < requested };
     });
   }
+
+  // Алиасы для совместимости со старым кодом
+  const adjustUserCards = adjustUserBalance;
+  const grantCards = grantBalance;
 
   async function clearHistory(userKey) {
     const key = normalizeNick(userKey);
@@ -433,17 +404,17 @@
   }
 
   function exportData() {
-    return JSON.stringify({ format: 'misha-cards-export', version: 2, data: db }, null, 2);
+    return JSON.stringify({ format: 'misha-bank-export', version: 3, data: db }, null, 2);
   }
 
   async function importData(text) {
     let parsed;
     try { parsed = JSON.parse(text); } catch (_) { return { ok: false, error: 'Файл не похож на JSON.' }; }
     const incoming = normalizeDb(parsed && parsed.data ? parsed.data : parsed);
-    if (!Object.keys(incoming.users).length) return { ok: false, error: 'В файле не найдены игроки коллекции.' };
+    if (!Object.keys(incoming.users).length) return { ok: false, error: 'В файле не найдены игроки.' };
     db = incoming;
     const pushed = await push();
-    if (!pushed) return { ok: false, error: 'Не удалось отправить коллекцию в общую базу.' };
+    if (!pushed) return { ok: false, error: 'Не удалось отправить данные в общую базу.' };
     saveLocal();
     return { ok: true };
   }
@@ -467,8 +438,10 @@
     purgeTestAccounts,
     deleteUser,
     adjustUserCards,
+    adjustUserBalance,
     clearHistory,
     grantCards,
+    grantBalance,
     exportData,
     importData,
     pull,

@@ -1,12 +1,11 @@
-/* Интерфейс MISHA CARDS — коллекционная игра без настоящих денег. */
+/* Интерфейс MISHA BANK — своя валюта «@» (собаки). */
 (function () {
   'use strict';
 
   const SESSION_KEY = 'misha-bank-session-v1';
-  const CARDS = window.BANK_CARDS;
   const store = window.BankStore;
   const el = (id) => document.getElementById(id);
-  const state = { key: null, user: null, send: {}, adminSend: {}, adminTargetKey: '', adminAmounts: {}, mode: 'login', nextDailyAt: 0, busy: false, isAdmin: false, lastRecipient: '', netDown: false };
+  const state = { key: null, user: null, sendAmount: 0, adminTargetKey: '', adminAmount: 0, mode: 'login', nextDailyAt: 0, busy: false, isAdmin: false, lastRecipient: '', netDown: false };
   const number = (value) => new Intl.NumberFormat('ru-RU').format(value);
   let toastTimer = null;
   let dailyTimer = null;
@@ -38,7 +37,7 @@
   function setMode(mode) {
     state.mode = mode;
     document.querySelectorAll('.switch-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mode));
-    el('auth-submit').textContent = mode === 'login' ? 'Войти' : 'Создать коллекцию';
+    el('auth-submit').textContent = mode === 'login' ? 'Войти' : 'Создать счёт';
     el('auth-pin').value = '';
     el('auth-error').textContent = '';
   }
@@ -58,13 +57,12 @@
     try { localStorage.setItem(SESSION_KEY, result.key); } catch (_) { /* приватный режим */ }
     state.key = result.key;
     state.user = store.getUser(result.key);
-    state.nextDailyAt = result.daily ? result.daily.nextAt : state.user.lastDailyAt + 86400000;
+    state.nextDailyAt = result.daily ? result.daily.nextAt : (state.user.lastDailyAt || 0) + 86400000;
     state.isAdmin = (result.key === 'admin');
     el('auth-pin').value = '';
     await enterGame();
-    if (result.daily && result.daily.issued) {
-      const drop = describeCards(result.daily.cards);
-      toast(`🎁 Ежедневный дроп: ${drop}`);
+    if (result.daily && result.daily.amount) {
+      toast(`🎁 Ежедневный бонус: ${number(result.daily.amount)} @`);
     } else {
       toast(state.mode === 'register' ? `Добро пожаловать, ${result.user.nick}!` : `С возвращением, ${result.user.nick}!`);
     }
@@ -78,8 +76,7 @@
     lastSyncAt = 0;
     state.key = null;
     state.user = null;
-    state.send = {};
-    state.adminSend = {};
+    state.sendAmount = 0;
     state.isAdmin = false;
     el('screen-bank').classList.add('hidden');
     el('screen-auth').classList.remove('hidden');
@@ -91,9 +88,11 @@
   async function enterGame() {
     el('screen-auth').classList.add('hidden');
     el('screen-bank').classList.remove('hidden');
-    state.send = {};
-    state.adminSend = {};
-    el('to-nick').value = '';
+    state.sendAmount = 0;
+    const amountInput = el('send-amount');
+    if (amountInput) amountInput.value = '';
+    const toNick = el('to-nick');
+    if (toNick) toNick.value = '';
     updateAdminVisibility();
     if (state.isAdmin) {
       try { await store.purgeTestAccounts(); } catch (_) { /* ignore */ }
@@ -131,9 +130,9 @@
     state.busy = false;
     if (result && result.ok) {
       state.user = store.getUser(state.key);
-      state.nextDailyAt = result.daily ? result.daily.nextAt : state.user.lastDailyAt + 86400000;
+      state.nextDailyAt = result.daily ? result.daily.nextAt : (state.user.lastDailyAt || 0) + 86400000;
       renderAll();
-      if (result.daily && result.daily.issued) toast(`🎁 Новый ежедневный дроп: ${describeCards(result.daily.cards)}`);
+      if (result.daily && result.daily.amount) toast(`🎁 Новый ежедневный бонус: ${number(result.daily.amount)} @`);
     }
   }
 
@@ -142,7 +141,7 @@
     const now = Date.now();
     if (!force && now - lastSyncAt < 30000) return;
     lastSyncAt = now;
-    const prevInventory = state.user ? JSON.stringify(state.user.inventory) : null;
+    const prevBalance = state.user ? store.total(state.user) : null;
     const ok = await store.pull();
     state.user = store.getUser(state.key);
     if (!ok) {
@@ -153,10 +152,10 @@
       updateOfflineState();
     }
     if (state.user) {
-      if (prevInventory && JSON.stringify(state.user.inventory) !== prevInventory) {
+      if (prevBalance !== null && store.total(state.user) !== prevBalance) {
         toast('✨ Баланс обновлён');
       }
-      state.nextDailyAt = state.user.lastDailyAt + 86400000;
+      state.nextDailyAt = (state.user.lastDailyAt || 0) + 86400000;
       renderAll();
     } else {
       toast('Твой профиль удалён или не найден', true);
@@ -175,17 +174,11 @@
     el('user-nick').textContent = state.user.nick;
     el('user-avatar').textContent = state.user.nick.slice(0, 1).toUpperCase();
     el('user-since').textContent = 'с нами с ' + new Date(state.user.createdAt).toLocaleDateString('ru-RU');
-    const sparks = store.total(state.user.inventory);
-    el('top-balance').textContent = `${number(sparks)} ✨`;
-    el('wallet-balance').textContent = number(sparks);
-    el('wallet-count').textContent = String(store.countCards(state.user.inventory));
-
-  }
-
-  function describeCards(inventory) {
-    return CARDS.filter(card => inventory[card.id] > 0)
-      .map(card => `${card.emoji} ${card.name}${inventory[card.id] > 1 ? ` ×${inventory[card.id]}` : ''}`)
-      .join(', ') || 'тираж закончился';
+    const balance = store.total(state.user);
+    el('top-balance').textContent = `${number(balance)} @`;
+    el('wallet-balance').textContent = number(balance);
+    const countEl = el('wallet-count');
+    if (countEl) countEl.textContent = number(balance);
   }
 
   function renderDaily() {
@@ -193,8 +186,8 @@
     const remaining = Math.max(0, state.nextDailyAt - Date.now());
     const canDrop = !remaining;
     el('daily-banner').classList.toggle('daily-ready', canDrop);
-    el('daily-title').textContent = canDrop ? 'Ежедневный дроп готов!' : 'Следующие карточки скоро';
-    el('daily-sub').textContent = canDrop ? 'Новые карточки появятся автоматически' : 'Карточки появляются автоматически при входе';
+    el('daily-title').textContent = canDrop ? 'Ежедневный бонус готов!' : 'Следующий бонус скоро';
+    el('daily-sub').textContent = canDrop ? 'Бонус начислится автоматически' : 'Бонус начисляется автоматически раз в 24 часа';
     if (canDrop) {
       el('daily-timer').textContent = '🎁 готово';
     } else {
@@ -205,49 +198,32 @@
     }
   }
 
-  function cardTile(card, amount) {
-    return `
-      <article class="card-tile rarity-${card.rarityKey}" style="--card-bg:${card.bg};--card-glow:${card.glow}">
-        <span class="card-orbit card-orbit-a" aria-hidden="true"></span>
-        <span class="card-orbit card-orbit-b" aria-hidden="true"></span>
-        <div class="card-top">
-          <span class="card-rarity">${escapeHtml(card.rarity)}</span>
-          <span class="card-qty">×${amount}</span>
-        </div>
-        <div class="card-art"><span class="card-emoji">${card.emoji}</span></div>
-        <div class="card-copy">
-          <div class="card-name">${escapeHtml(card.name)}</div>
-        </div>
-        <div class="card-foot"><span>${number(card.spark)} ✨</span><span>MISHA CARDS</span></div>
-      </article>`;
-  }
-
   function renderWallet() {
     if (!state.user) return;
-    const owned = CARDS.filter(card => state.user.inventory[card.id] > 0);
-    el('wallet-grid').innerHTML = owned.length
-      ? owned.map(card => cardTile(card, state.user.inventory[card.id])).join('')
-      : '<div class="empty">Пока пустая полка — ежедневные карточки уже скоро! ✨</div>';
+    const balance = store.total(state.user);
+    const grid = el('wallet-grid');
+    if (grid) grid.innerHTML = `<div class="empty">Твой баланс: ${number(balance)} @</div>`;
 
     const history = store.getHistory(state.key);
     if (!history.length) {
-      el('history-list').innerHTML = '<li class="hist-item"><div class="hist-main"><strong>Пока пусто</strong><small>Здесь появятся дропы и подарки</small></div></li>';
+      el('history-list').innerHTML = '<li class="hist-item"><div class="hist-main"><strong>Пока пусто</strong><small>Здесь появятся бонусы и переводы</small></div></li>';
       return;
     }
     el('history-list').innerHTML = history.map(item => {
-      const score = store.total(item.cards);
+      const amount = item.amount || 0;
       let label = item.memo;
-      if (item.type === 'out') label = `🎁 → ${item.peer}`;
-      if (item.type === 'in') label = `🎁 ← ${item.peer}`;
-      if (item.type === 'daily') label = '🎁 Ежедневный дроп';
+      if (item.type === 'out') label = `→ ${item.peer}`;
+      if (item.type === 'in') label = `← ${item.peer}`;
+      if (item.type === 'daily') label = 'Ежедневный бонус';
+      if (item.type === 'mint') label = 'Стартовый баланс';
       const sign = item.type === 'out' ? '−' : '+';
       return `
         <li class="hist-item ${item.type === 'out' ? 'out' : 'in'}">
           <div class="hist-main">
             <strong>${escapeHtml(label)}</strong>
-            <small>${escapeHtml(describeCards(item.cards))} · ${new Date(item.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>
+            <small>${new Date(item.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>
           </div>
-          <span class="hist-amount">${sign}${number(score)} ✨</span>
+          <span class="hist-amount">${sign}${number(amount)} @</span>
         </li>`;
     }).join('');
   }
@@ -280,42 +256,20 @@
   function renderSend() {
     if (!state.user) return;
     renderRecentRecipients();
-    const owned = CARDS.filter(card => state.user.inventory[card.id] > 0);
-    if (!owned.length) {
-      el('send-rows').innerHTML = '<div class="empty">Пока нечего дарить — дождись ежедневного дропа! 🎁</div>';
-      el('send-total-value').textContent = '0';
-      el('send-total-count').textContent = 'ничего не выбрано';
-      el('btn-send').disabled = true;
-      return;
-    }
-    el('send-rows').innerHTML = owned.map(card => {
-      const picked = state.send[card.id] || 0;
-      const have = state.user.inventory[card.id];
-      return `
-        <div class="send-row ${picked ? 'picked' : ''}" data-card="${card.id}">
-          <div class="send-mini rarity-${card.rarityKey}" style="--card-bg:${card.bg}"><span class="send-emoji">${card.emoji}</span></div>
-          <div class="send-info">
-            <strong>${escapeHtml(card.name)}</strong>
-            <small>${have} шт · ${number(card.spark)} ✨ за карточку</small>
-          </div>
-          <div class="stepper">
-            <button type="button" data-act="minus" aria-label="Меньше" ${picked <= 0 ? 'disabled' : ''}>−</button>
-            <span class="stepper-val">${picked}</span>
-            <button type="button" data-act="plus" aria-label="Больше" ${picked >= have ? 'disabled' : ''}>+</button>
-          </div>
-        </div>`;
-    }).join('');
     updateSendTotals();
   }
 
   function updateSendTotals() {
-    const spark = CARDS.reduce((sum, card) => sum + (state.send[card.id] || 0) * card.spark, 0);
-    const count = store.countCards(state.send);
-    el('send-total-value').textContent = number(spark);
-    el('send-total-count').textContent = count ? `${count} карточек · ${number(spark)} ✨` : 'ничего не выбрано';
+    const amountInput = el('send-amount');
+    const amount = amountInput ? Number(amountInput.value) : 0;
+    const balance = store.total(state.user);
+    const validAmount = Number.isInteger(amount) && amount > 0;
+    el('send-total-value').textContent = number(validAmount ? amount : 0);
+    el('send-total-count').textContent = validAmount ? `${number(amount)} @` : 'укажи сумму';
     const recipient = store.findUser(el('to-nick').value.trim());
-    el('btn-send').disabled = state.busy || !count || !recipient || recipient.key === state.key;
-    updateRecipientHint(recipient);
+    const canSend = validAmount && amount <= balance && recipient && recipient.key !== state.key;
+    el('btn-send').disabled = state.busy || !canSend;
+    updateRecipientHint(recipient, balance);
   }
 
   async function searchRecipient() {
@@ -325,7 +279,7 @@
     const hint = el('send-hint');
     let recipient = store.findUser(raw);
     if (!recipient) {
-      if (hint) hint.textContent = 'Ищем игрока в общей коллекции…';
+      if (hint) hint.textContent = 'Ищем игрока в общей базе…';
       await store.pull();
       state.user = store.getUser(state.key);
       recipient = store.findUser(raw);
@@ -333,62 +287,53 @@
     if (recipient && recipient.key !== state.key) {
       if (hint) hint.textContent = '';
     } else if (recipient && recipient.key === state.key) {
-      if (hint) hint.textContent = 'Это твоя коллекция 🙂 Выбери другого игрока.';
+      if (hint) hint.textContent = 'Это твой счёт 🙂 Выбери другого игрока.';
     } else {
-      if (hint) hint.textContent = 'Игрок с таким ником не найден в общей коллекции.';
+      if (hint) hint.textContent = 'Игрок с таким ником не найден.';
     }
     updateSendTotals();
   }
 
-  function updateRecipientHint(recipient) {
+  function updateRecipientHint(recipient, balance) {
     const hint = el('send-hint');
     const note = el('send-note');
     const raw = el('to-nick').value.trim();
     if (!raw) { hint.textContent = ''; note.textContent = ''; return; }
     if (!recipient) {
-      hint.textContent = 'Игрок с таким ником не найден в общей коллекции.';
-      note.textContent = 'Проверь ник. Подарки доступны всем игрокам, которые зарегистрировались.';
+      hint.textContent = 'Игрок с таким ником не найден.';
+      note.textContent = 'Проверь ник. Переводы доступны всем игрокам.';
       return;
     }
     if (recipient.key === state.key) {
-      hint.textContent = 'Это твоя коллекция 🙂 Выбери другого игрока.';
+      hint.textContent = 'Это твой счёт 🙂 Выбери другого игрока.';
       note.textContent = '';
       return;
     }
-    hint.textContent = `${recipient.nick} · ${number(store.countCards(recipient.inventory))} карточек в коллекции`;
+    hint.textContent = `${recipient.nick} · баланс ${number(store.total(recipient))} @`;
     note.textContent = '';
-  }
-
-  function changeAmount(cardId, delta) {
-    const have = state.user.inventory[cardId] || 0;
-    const next = Math.max(0, Math.min(have, (state.send[cardId] || 0) + delta));
-    if (next) state.send[cardId] = next;
-    else delete state.send[cardId];
-    renderSend();
   }
 
   async function doTransfer() {
     if (state.busy) return;
-    const count = store.countCards(state.send);
-    if (!count) { toast('Выбери карточки для подарка', true); return; }
-    // pull fresh so recipient lookup is accurate across browsers
+    const raw = el('to-nick').value.trim();
+    const amount = Number(el('send-amount').value);
+    if (!Number.isInteger(amount) || amount <= 0) { toast('Укажи сумму перевода', true); return; }
     await store.pull();
     state.user = store.getUser(state.key);
-    const raw = el('to-nick').value.trim();
     const recipient = store.findUser(raw);
     if (!recipient || recipient.key === state.key) { toast('Проверь ник получателя', true); updateSendTotals(); return; }
-    // запоминаем ник для следующего перевода
+    if (amount > store.total(state.user)) { toast('Недостаточно @', true); return; }
     state.lastRecipient = raw;
     setBusy(true);
     el('btn-send').disabled = true;
-    const result = await store.transfer(state.key, raw, state.send);
+    const result = await store.transfer(state.key, raw, amount);
     setBusy(false);
     if (!result.ok) { toast(result.error, true); updateSendTotals(); return; }
     state.user = store.getUser(state.key);
-    state.send = {};
+    el('send-amount').value = '';
     el('to-nick').value = '';
     renderAll();
-    toast(`🎁 Карточки отправлены игроку ${recipient.nick}!`);
+    toast(`@ отправлены игроку ${recipient.nick}!`);
   }
 
   function renderBank() {
@@ -398,7 +343,7 @@
           <li class="${row.key === state.key ? 'me' : ''}">
             <span class="lb-rank">${index + 1}</span>
             <span class="lb-nick">${escapeHtml(row.nick)}</span>
-            <span class="lb-sum">${number(row.value)} ✨</span>
+            <span class="lb-sum">${number(row.value)} @</span>
           </li>`).join('')
       : '<li><span class="lb-nick muted">Пока один ты</span></li>';
   }
@@ -417,7 +362,7 @@
     const profile = el('admin-profile');
     const rows = el('admin-card-rows');
     if (!state.adminTargetKey) {
-      profile.innerHTML = '<div class="empty">Выбери игрока, чтобы увидеть его коллекцию</div>';
+      profile.innerHTML = '<div class="empty">Выбери игрока, чтобы увидеть его счёт</div>';
       rows.innerHTML = '';
       return;
     }
@@ -433,29 +378,25 @@
           <div class="avatar">${escapeHtml(user.nick.slice(0, 1).toUpperCase())}</div>
           <div class="admin-profile-meta">
             <strong>${escapeHtml(user.nick)}</strong>
-            <span class="muted small">с нами с ${new Date(user.createdAt).toLocaleDateString('ru-RU')} · ${store.countCards(user.inventory)} карточек · ${number(store.total(user.inventory))} ✨</span>
+            <span class="muted small">с нами с ${new Date(user.createdAt).toLocaleDateString('ru-RU')} · баланс ${number(store.total(user))} @</span>
           </div>
         </div>
         <button type="button" class="btn danger small" data-del-user="${escapeHtml(state.adminTargetKey)}">Удалить профиль</button>
       </div>`;
 
-    rows.innerHTML = CARDS.map(card => {
-      const have = user.inventory[card.id] || 0;
-      const amount = state.adminAmounts[card.id] || 0;
-      return `
-        <div class="admin-card-row" data-card="${card.id}">
-          <div class="send-mini rarity-${card.rarityKey}" style="--card-bg:${card.bg}"><span class="send-emoji">${card.emoji}</span></div>
-          <div class="send-info">
-            <strong>${escapeHtml(card.name)}</strong>
-            <small>у игрока: ${have} шт · ${number(card.spark)} ✨ за карточку</small>
-          </div>
-          <div class="admin-actions">
-            <input class="admin-amount" type="number" min="1" step="1" inputmode="numeric" data-card="${card.id}" value="${amount || ''}" placeholder="0" />
-            <button type="button" class="btn primary small" data-act="add" data-card="${card.id}">Добавить</button>
-            <button type="button" class="btn ghost small" data-act="remove" data-card="${card.id}">Забрать</button>
-          </div>
-        </div>`;
-    }).join('');
+    const amount = state.adminAmount || 0;
+    rows.innerHTML = `
+      <div class="admin-card-row">
+        <div class="send-info">
+          <strong>Баланс игрока</strong>
+          <small>сейчас: ${number(store.total(user))} @</small>
+        </div>
+        <div class="admin-actions">
+          <input class="admin-amount" type="number" min="1" step="1" inputmode="numeric" value="${amount || ''}" placeholder="0" />
+          <button type="button" class="btn primary small" data-act="add">Добавить</button>
+          <button type="button" class="btn ghost small" data-act="remove">Забрать</button>
+        </div>
+      </div>`;
   }
 
   async function doDeleteUser(key) {
@@ -467,24 +408,26 @@
     if (!result.ok) { toast(result.error, true); return; }
     toast('Пользователь удалён');
     if (state.adminTargetKey === key) state.adminTargetKey = '';
-    state.adminAmounts = {};
+    state.adminAmount = 0;
     renderAdmin();
     renderBank();
   }
 
-  async function doAdjustCard(cardId, mode) {
+  async function doAdjustCard(mode) {
     if (state.busy) return;
-    const amount = Number(state.adminAmounts[cardId] || 0);
-    if (!Number.isInteger(amount) || amount <= 0) { toast('Укажи количество карточек', true); return; }
+    const input = document.querySelector('.admin-amount');
+    const amount = Number(input ? input.value : 0);
+    if (!Number.isInteger(amount) || amount <= 0) { toast('Укажи сумму', true); return; }
     const target = state.adminTargetKey;
     if (!target) { toast('Выбери игрока', true); return; }
     setBusy(true);
-    const result = await store.adjustUserCards(target, cardId, amount, mode);
+    const result = await store.adjustUserBalance(target, amount, mode);
     setBusy(false);
     if (!result.ok) { toast(result.error, true); return; }
     if (mode === 'remove' && result.removedMax) toast(`Забрано ${result.adjusted} (максимум)`);
-    else toast(mode === 'add' ? 'Карточки добавлены' : 'Карточки забраны');
-    state.adminAmounts[cardId] = 0;
+    else toast(mode === 'add' ? '@ добавлены' : '@ забраны');
+    state.adminAmount = 0;
+    if (input) input.value = '';
     if (state.key) state.user = store.getUser(state.key);
     renderAdmin();
     renderBank();
@@ -506,9 +449,7 @@
     renderWallet();
     renderSend();
     renderBank();
-
     if (state.isAdmin && document.querySelector('[data-panel="admin"]:not(.hidden)')) renderAdmin();
-    // запоминаем ник при открытии экрана подарка
     if (state.key && !el('to-nick').value && state.lastRecipient) {
       el('to-nick').value = state.lastRecipient;
     }
@@ -519,12 +460,12 @@
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'misha-cards-backup.json';
+    link.download = 'misha-bank-backup.json';
     document.body.appendChild(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast('Резервная копия коллекции выгружена');
+    toast('Резервная копия выгружена');
   }
 
   async function importJson(file) {
@@ -539,7 +480,7 @@
         state.key = session.key;
         state.user = store.getUser(session.key);
         renderAll();
-        toast('Коллекция загружена');
+        toast('Данные загружены');
       } else {
         logout();
         toast('Данные загружены. Войди под своим ником');
@@ -553,25 +494,26 @@
     el('auth-form').addEventListener('submit', handleAuth);
     el('btn-logout').addEventListener('click', logout);
     document.querySelectorAll('.tab').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
-    el('send-rows').addEventListener('click', event => {
-      const button = event.target.closest('button[data-act]');
-      if (!button) return;
-      const row = button.closest('[data-card]');
-      if (row) changeAmount(row.dataset.card, button.dataset.act === 'plus' ? 1 : -1);
-    });
-    el('to-nick').addEventListener('input', event => {
-      event.target.value = event.target.value.replace(/\s/g, '');
-      renderNickSuggestions();
-      updateSendTotals();
-      clearTimeout(searchTimer);
-      searchTimer = setTimeout(searchRecipient, 900);
-    });
-    el('to-nick').addEventListener('focus', () => {
-      store.pull().then(() => { state.user = store.getUser(state.key); renderNickSuggestions(); });
-    });
-    el('to-nick').addEventListener('blur', () => {
-      setTimeout(() => { const b = el('nick-suggestions'); if (b) b.classList.add('hidden'); }, 150);
-    });
+    const toNick = el('to-nick');
+    if (toNick) {
+      toNick.addEventListener('input', event => {
+        event.target.value = event.target.value.replace(/\s/g, '');
+        renderNickSuggestions();
+        updateSendTotals();
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(searchRecipient, 900);
+      });
+      toNick.addEventListener('focus', () => {
+        store.pull().then(() => { state.user = store.getUser(state.key); renderNickSuggestions(); });
+      });
+      toNick.addEventListener('blur', () => {
+        setTimeout(() => { const b = el('nick-suggestions'); if (b) b.classList.add('hidden'); }, 150);
+      });
+    }
+    const amountInput = el('send-amount');
+    if (amountInput) {
+      amountInput.addEventListener('input', () => updateSendTotals());
+    }
     el('btn-send').addEventListener('click', doTransfer);
     const refresh = el('btn-refresh');
     if (refresh) refresh.addEventListener('click', () => syncFromServer(true));
@@ -597,15 +539,15 @@
     const adminRows = el('admin-card-rows');
     if (adminRows) {
       adminRows.addEventListener('click', event => {
-        const button = event.target.closest('button[data-act][data-card]');
+        const button = event.target.closest('button[data-act]');
         if (!button) return;
-        doAdjustCard(button.dataset.card, button.dataset.act);
+        doAdjustCard(button.dataset.act === 'add' ? 'add' : 'remove');
       });
       adminRows.addEventListener('input', event => {
-        const input = event.target.closest('input.admin-amount[data-card]');
+        const input = event.target.closest('input.admin-amount');
         if (!input) return;
         const value = Math.max(0, parseInt(input.value, 10) || 0);
-        state.adminAmounts[input.dataset.card] = value;
+        state.adminAmount = value;
         if (String(value) !== input.value) input.value = value ? String(value) : '';
       });
     }
@@ -613,7 +555,7 @@
     const adminTarget = el('admin-target');
     if (adminTarget) adminTarget.addEventListener('change', () => {
       state.adminTargetKey = adminTarget.value;
-      state.adminAmounts = {};
+      state.adminAmount = 0;
       renderAdmin();
     });
 
@@ -668,10 +610,10 @@
       const result = await store.claimDaily(savedKey);
       state.user = store.getUser(savedKey);
       if (!state.user) { logout(); return; }
-      state.nextDailyAt = (result && result.daily) ? result.daily.nextAt : state.user.lastDailyAt + 86400000;
+      state.nextDailyAt = (result && result.daily) ? result.daily.nextAt : (state.user.lastDailyAt || 0) + 86400000;
       await enterGame();
-      if (result && result.daily && result.daily.issued) {
-        toast(`🎁 Ежедневный дроп: ${describeCards(result.daily.cards)}`);
+      if (result && result.daily && result.daily.amount) {
+        toast(`🎁 Ежедневный бонус: ${number(result.daily.amount)} @`);
       }
     } else {
       el('screen-auth').classList.remove('hidden');

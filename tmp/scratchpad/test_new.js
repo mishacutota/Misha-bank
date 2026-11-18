@@ -1,0 +1,26 @@
+const fs = require('fs');
+global.window = {};
+const store = {};
+global.localStorage = { getItem: k => store[k]||null, setItem: (k,v)=>{store[k]=v;}, removeItem: k=>{delete store[k];} };
+global.fetch = fetch;
+eval(fs.readFileSync('/workspace/js/store.js','utf8'));
+const S = global.window.BankStore;
+(async () => {
+  const ok = await S.pull();
+  console.log('pull', ok, S.isOnline(), S.lastError());
+  const r1 = await S.register('alice_test', '1234');
+  console.log('register alice', r1.ok, r1.key, r1.error);
+  const r2 = await S.register('bob_test', '5678');
+  console.log('register bob', r2.ok, r2.key, r2.error);
+  const t = await S.transfer('alice_test', 'bob_test', 30);
+  console.log('transfer', t.ok, t.amount, t.error);
+  console.log('alice', S.getUser('alice_test').balance);
+  console.log('bob', S.getUser('bob_test').balance);
+  const dup = await S.register('alice_test', '9999');
+  console.log('dup', dup.ok, dup.error);
+  const daily = await S.claimDaily('alice_test');
+  console.log('daily', daily.ok, daily.daily && daily.daily.amount);
+  console.log('history alice', S.getHistory('alice_test').map(h=>h.type+':'+h.amount));
+  console.log('leaderboard', S.getLeaderboard().map(x=>x.nick+':'+x.value));
+  console.log('DONE');
+})();

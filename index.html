@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MISHA CARDS — коллекция карточек и подарки</title>
-  <meta name="description" content="Игра в коллекционные карточки: уникальный ник, ежедневные карточки, обмен и подарки другим игрокам. Работает на GitHub Pages." />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🃏</text></svg>" />
+  <title>MISHA BANK — своя валюта @</title>
+  <meta name="description" content="Простой онлайн-банк: уникальный ник, баланс в @ (собаках), переводы другим игрокам и таблица лидеров. Работает на GitHub Pages." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>@</text></svg>" />
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
@@ -20,10 +20,10 @@
     <section id="screen-auth" class="screen">
       <div class="auth-card">
         <div class="brand brand--big">
-          <span class="brand-mark">🃏</span>
+          <span class="brand-mark">@</span>
           <div class="brand-text">
-            <h1>MISHA CARDS</h1>
-            <p class="brand-sub">коллекция карточек и подарки</p>
+            <h1>MISHA BANK</h1>
+            <p class="brand-sub">своя валюта @ (собаки)</p>
           </div>
         </div>
 
@@ -44,25 +44,23 @@
           <p id="auth-error" class="error" role="alert"></p>
           <button id="auth-submit" class="btn primary wide" type="submit">Войти</button>
         </form>
-
-        
       </div>
     </section>
 
-    <!-- ================= КОЛЛЕКЦИЯ ================= -->
+    <!-- ================= БАНК ================= -->
     <section id="screen-bank" class="screen hidden">
       <header class="topbar">
         <div class="brand">
-          <span class="brand-mark">🃏</span>
+          <span class="brand-mark">@</span>
           <div class="brand-text">
-            <h1>MISHA CARDS</h1>
-            <p class="brand-sub">твоя полка</p>
+            <h1>MISHA BANK</h1>
+            <p class="brand-sub">твой счёт</p>
           </div>
         </div>
         <div class="topbar-right">
           <div class="balance-chip">
-            <span class="balance-label">искры</span>
-            <strong id="top-balance">0</strong>
+            <span class="balance-label">баланс</span>
+            <strong id="top-balance">0 @</strong>
           </div>
           <button id="btn-refresh" class="btn ghost small" type="button" title="Обновить данные">↻</button>
           <button id="btn-logout" class="btn ghost" type="button">Выйти</button>
@@ -81,29 +79,29 @@
         <div class="daily-left">
           <span class="daily-emoji">🎁</span>
           <div>
-            <strong id="daily-title">Ежедневный дроп</strong>
-            <span id="daily-sub" class="muted small">каждые 24 часа — новые карточки</span>
+            <strong id="daily-title">Ежедневный бонус</strong>
+            <span id="daily-sub" class="muted small">каждые 24 часа — новые @</span>
           </div>
         </div>
         <span id="daily-timer" class="daily-timer">готово</span>
       </div>
 
       <nav class="tabs" role="tablist">
-        <button class="tab active" data-tab="wallet" type="button">Коллекция</button>
-        <button class="tab" data-tab="send" type="button">Подарить</button>
+        <button class="tab active" data-tab="wallet" type="button">Счёт</button>
+        <button class="tab" data-tab="send" type="button">Перевести</button>
         <button class="tab" data-tab="bank" type="button">Топ</button>
         <button class="tab hidden" data-tab="admin" type="button" id="tab-admin">Админ</button>
       </nav>
 
-      <!-- ---------- КОЛЛЕКЦИЯ ---------- -->
+      <!-- ---------- СЧЁТ ---------- -->
       <section class="panel" data-panel="wallet">
         <div class="wallet-summary">
           <div>
-            <span class="muted small">искры коллекции</span>
-            <div class="big-num"><span id="wallet-balance">0</span><span class="unit">✨</span></div>
+            <span class="muted small">баланс</span>
+            <div class="big-num"><span id="wallet-balance">0</span><span class="unit">@</span></div>
           </div>
           <div class="summary-right">
-            <span class="muted small">карточек</span>
+            <span class="muted small">всего @</span>
             <div class="big-num small-num" id="wallet-count">0</div>
           </div>
         </div>
@@ -117,36 +115,38 @@
         </div>
       </section>
 
-      <!-- ---------- ПОДАРОК ---------- -->
+      <!-- ---------- ПЕРЕВОД ---------- -->
       <section class="panel hidden" data-panel="send">
         <label class="field nick-field">
           <span>Ник получателя</span>
-          <input id="to-nick" type="text" maxlength="16" placeholder="кому дарим карточки?" autocomplete="off" />
+          <input id="to-nick" type="text" maxlength="16" placeholder="кому переводим @?" autocomplete="off" />
           <ul id="nick-suggestions" class="nick-suggestions hidden"></ul>
         </label>
         <div id="recent-recipients" class="recent-recipients"></div>
         <p id="send-hint" class="hint"></p>
         <p id="send-note" class="hint warn"></p>
 
-        <h3 class="section-title">Какие карточки и сколько</h3>
-        <div id="send-rows" class="send-rows"></div>
+        <label class="field">
+          <span>Сумма (@)</span>
+          <input id="send-amount" type="number" min="1" step="1" inputmode="numeric" placeholder="сколько @ переводим?" />
+        </label>
 
         <div class="send-total">
           <div>
-            <span class="muted small">итого искр</span>
-            <div class="big-num small-num"><span id="send-total-value">0</span><span class="unit">✨</span></div>
+            <span class="muted small">к переводу</span>
+            <div class="big-num small-num"><span id="send-total-value">0</span><span class="unit">@</span></div>
           </div>
-          <span id="send-total-count" class="muted small">ничего не выбрано</span>
+          <span id="send-total-count" class="muted small">укажи сумму</span>
         </div>
 
-        <button id="btn-send" class="btn primary wide" type="button" disabled>Подарить карточки</button>
-        <p class="note">Карточки сразу уходят из твоей коллекции и появляются у получателя. Никаких комиссий.</p>
+        <button id="btn-send" class="btn primary wide" type="button" disabled>Перевести @</button>
+        <p class="note">Средства сразу списываются и зачисляются получателю. Без комиссий.</p>
       </section>
 
       <!-- ---------- ТОП ---------- -->
       <section class="panel hidden" data-panel="bank">
         <h3 class="section-title">Топ по богатству</h3>
-        <p class="muted small">Список игроков, отсортированный по количеству искр в коллекции.</p>
+        <p class="muted small">Список игроков, отсортированный по количеству @ на счёте.</p>
         <ul id="leaderboard" class="leaderboard"></ul>
       </section>
 
@@ -156,7 +156,7 @@
           <div class="admin-head">
             <div>
               <h3 class="section-title">Управление игроками</h3>
-              <p class="muted small">Выбери игрока, посмотри его коллекцию и измени количество карточек.</p>
+              <p class="muted small">Выбери игрока, посмотри его счёт и измени баланс.</p>
             </div>
           </div>
 
@@ -167,9 +167,9 @@
 
           <div id="admin-profile" class="admin-profile"></div>
 
-          <h3 class="section-title">Карточки игрока</h3>
+          <h3 class="section-title">Баланс игрока</h3>
           <div id="admin-card-rows" class="admin-card-rows"></div>
-          <p class="note">Изменения применяются сразу. При изъятии карточки не уйдут в минус: заберётся максимум из того, что есть.</p>
+          <p class="note">Изменения применяются сразу.</p>
         </div>
       </section>
     </section>
@@ -185,7 +185,6 @@
     </div>
   </div>
 
-  <script src="js/cards.js"></script>
   <script src="js/store.js"></script>
   <script src="js/app.js"></script>
 </body>
