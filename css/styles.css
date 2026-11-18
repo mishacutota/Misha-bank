@@ -879,7 +879,7 @@ body {
 .avatar { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: rgba(91,188,255,0.15); font-size: 18px; overflow: hidden; vertical-align: middle; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .user-line .avatar { width: 44px; height: 44px; font-size: 22px; }
-.lb-avatar { width: 32px; height: 32px; font-size: 16px; margin: 0 6px; }
+.lb-avatar { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: rgba(91,188,255,0.15); font-size: 16px; margin: 0 4px; flex-shrink: 0; overflow: hidden; }
 .hist-message { margin-top: 4px; font-size: 13px; color: #a8dcff; background: rgba(91,188,255,0.08); padding: 4px 8px; border-radius: 8px; display: inline-block; max-width: 100%; word-break: break-word; }
 
 .work-card { background: rgba(91,188,255,0.06); border: 1px solid rgba(91,188,255,0.18); border-radius: 18px; padding: 20px; }
@@ -896,8 +896,9 @@ body {
 .work-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #5bbcff, #a8dcff); transition: width 0.15s ease; border-radius: 999px; }
 
 .field textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(91,188,255,0.2); background: rgba(91,188,255,0.06); color: #eaf2ff; font-family: inherit; resize: vertical; }
-.field textarea:focus { outline: none; border-color: #5bbcff; }.hist-avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: rgba(91,188,255,0.15); font-size: 13px; margin-right: 6px; vertical-align: middle; overflow: hidden; }
+.field textarea:focus { outline: none; border-color: #5bbcff; }
+.hist-avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: rgba(91,188,255,0.15); font-size: 13px; margin-right: 6px; vertical-align: middle; overflow: hidden; flex-shrink: 0; }
 .hist-avatar img { width: 100%; height: 100%; object-fit: cover; }
- hist-main { display: flex; flex-direction: column; }
+.hist-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .sug-avatar { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(91,188,255,0.15); font-size: 12px; margin-right: 6px; vertical-align: middle; overflow: hidden; }
 .sug-avatar img { width: 100%; height: 100%; object-fit: cover; }

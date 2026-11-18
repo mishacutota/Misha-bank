@@ -91,6 +91,7 @@
     state.sendAmount = 0;
     state.workTaps = 0;
     state.sessionEarned = 0;
+    if (workGuard && typeof workGuard.reset === 'function') workGuard.reset();
     const amountInput = el('send-amount');
     if (amountInput) amountInput.value = '';
     const toNick = el('to-nick');
@@ -197,15 +198,10 @@
     const avatarNode = el('user-avatar');
     if (avatarNode) {
       const av = state.user.avatar || '';
-      if (av.startsWith('data:image')) {
-        avatarNode.innerHTML = `<img src="${av}" alt="" />`;
-        avatarNode.classList.add('avatar-img');
-      } else if (av.trim()) {
+      if (av.trim()) {
         avatarNode.textContent = av;
-        avatarNode.classList.remove('avatar-img');
       } else {
         avatarNode.textContent = state.user.nick.slice(0, 1).toUpperCase();
-        avatarNode.classList.remove('avatar-img');
       }
     }
     el('user-since').textContent = 'с нами с ' + new Date(state.user.createdAt).toLocaleDateString('ru-RU');
@@ -257,15 +253,15 @@
       if (item.peer) {
         const pu = store.findUser(item.peer);
         const av = (pu && pu.avatar) ? pu.avatar : '';
-        if (av.startsWith('data:image')) peerAvatar = `<img src="${av}" alt="" />`;
-        else if (av.trim()) peerAvatar = escapeHtml(av);
+        if (av.trim()) peerAvatar = escapeHtml(av);
         else if (pu) peerAvatar = escapeHtml((pu.nick || '?').slice(0,1).toUpperCase());
       }
       const avatarHtml = peerAvatar ? `<span class="hist-avatar">${peerAvatar}</span>` : '';
       return `
         <li class="hist-item ${item.type === 'out' ? 'out' : 'in'}">
+          ${avatarHtml}
           <div class="hist-main">
-            ${avatarHtml}<strong>${escapeHtml(label)}</strong>
+            <strong>${escapeHtml(label)}</strong>
             <small>${new Date(item.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>
             ${msg}
           </div>
@@ -296,7 +292,7 @@
     box.classList.remove('hidden');
     box.innerHTML = matches.map(u => {
       const av = u.avatar || '';
-      const avHtml = av.startsWith('data:image') ? `<img src="${av}" alt="" />` : (av.trim() ? escapeHtml(av) : escapeHtml(u.nick.slice(0,1).toUpperCase()));
+      const avHtml = av.trim() ? escapeHtml(av) : escapeHtml(u.nick.slice(0,1).toUpperCase());
       return `<li class="nick-suggestion" data-nick="${escapeHtml(u.nick)}"><span class="sug-avatar">${avHtml}</span>${escapeHtml(u.nick)}</li>`;
     }).join('');
   }
@@ -413,7 +409,7 @@
     el('leaderboard').innerHTML = top.length
       ? top.map((row, index) => {
           const av = row.avatar || '';
-          const avatarHtml = av.startsWith('data:image') ? `<img src="${av}" alt="" />` : (av.trim() ? escapeHtml(av) : escapeHtml(row.nick.slice(0,1).toUpperCase()));
+          const avatarHtml = av.trim() ? escapeHtml(av) : escapeHtml(row.nick.slice(0,1).toUpperCase());
           return `
           <li class="${row.key === state.key ? 'me' : ''}">
             <span class="lb-rank">${index + 1}</span>
@@ -452,7 +448,7 @@
     profile.innerHTML = `
       <div class="admin-profile-card">
         <div class="admin-profile-main">
-          <div class="avatar">${user.avatar && user.avatar.startsWith('data:image') ? `<img src="${user.avatar}" alt="" />` : escapeHtml((user.avatar && user.avatar.trim()) ? user.avatar : user.nick.slice(0, 1).toUpperCase())}</div>
+          <div class="avatar">${escapeHtml((user.avatar && user.avatar.trim()) ? user.avatar : user.nick.slice(0, 1).toUpperCase())}</div>
           <div class="admin-profile-meta">
             <strong>${escapeHtml(user.nick)}</strong>
             <span class="muted small">с нами с ${new Date(user.createdAt).toLocaleDateString('ru-RU')} · баланс ${number(store.total(user))} @</span>
@@ -565,7 +561,7 @@
     reader.readAsText(file);
   }
 
-  const AVATAR_EMOJIS = ['😀','😎','🤖','🐱','🐶','🦊','🐼','🐯','🐸','🐵','🦄','👽','👻','🧛','🥷','🧙','👑','🔥','⚡','🌟','💎','🎯','🚀','🎮','⚽','🏀','🏆','🍕','🍩','☕','🎵'];
+  const AVATAR_EMOJIS = ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','😉','😍','🥰','😘','😎','🤓','🧐','🤖','👽','👻','💀','🧟','🧛','🧝','🧚','🧙','🥷','👑','🔥','⚡','🌟','✨','💫','⭐','💎','🎯','🚀','🎮','🎲','⚽','🏀','🏈','⚾','🎾','🏐','🏉','🎱','🏓','🥊','🥋','🏊','🚴','🏃','💃','🕺','🎵','🎶','🎸','🥁','🎺','🎻','🎹','🎤','🎧','🎨','🎭','🎪','🎢','🎡','🦊','🐱','🐶','🐼','🐯','🐸','🐵','🦄','🐙','🦀','🐝','🦋','🐢','🐍','🦑','🦈','🐳','🐬','🦅','🦉','🦇','🐺','🐗','🐴','🐮','🐷','🐰','🐹','🐭','🐨','🐻','🐉','🐲','🌵','🌴','🌸','🌺','🌻','🌹','🌷','🪷','🫧','🪻','🍁','🍂','🎄','🪴','🌵','🧊','❄️','🌈','☀️','🌙','⭐','🌟'];
 
   function openSettings() {
     if (!state.key) return;
@@ -586,14 +582,12 @@
     if (!state.user) return;
     const preview = el('settings-avatar-preview');
     if (preview) {
-      const av = state.pendingAvatar || state.user.avatar || '';
-      if (av.startsWith('data:image')) {
-        preview.innerHTML = `<img src="${av}" alt="" />`;
-      } else if (av.trim()) {
-        preview.textContent = av;
-      } else {
-        preview.textContent = state.user.nick.slice(0, 1).toUpperCase();
-      }
+    const av = state.pendingAvatar || state.user.avatar || '';
+    if (av.trim()) {
+      preview.textContent = av;
+    } else {
+      preview.textContent = state.user.nick.slice(0, 1).toUpperCase();
+    }
     }
     const choices = el('avatar-choices');
     if (choices) {
@@ -664,19 +658,6 @@
       renderSettings();
     });
 
-    const fileInput = el('settings-avatar-file');
-    if (fileInput) fileInput.addEventListener('change', event => {
-      const file = event.target.files && event.target.files[0];
-      if (!file) return;
-      if (file.size > 120 * 1024) { toast('Картинка слишком большая (макс 120 КБ)', true); return; }
-      const reader = new FileReader();
-      reader.onload = () => {
-        state.pendingAvatar = String(reader.result || '');
-        renderSettings();
-      };
-      reader.readAsDataURL(file);
-    });
-
     const btnSaveAvatar = el('btn-save-avatar');
     if (btnSaveAvatar) btnSaveAvatar.addEventListener('click', saveAvatar);
     const btnResetAvatar = el('btn-reset-avatar');
@@ -690,21 +671,41 @@
     if (btnRefreshData) btnRefreshData.addEventListener('click', () => syncFromServer(true));
   }
 
-  // Work clicker
+  // Work clicker with anti-autoclicker
   let workTapTimer = null;
+  let workGuard = (window.WorkGuard && window.WorkGuard.create) ? window.WorkGuard.create() : null;
+  function setWorkStatus(text, bad) {
+    const node = el('work-status');
+    if (!node) return;
+    node.textContent = text;
+    node.style.color = bad ? 'var(--red, #ff6b6b)' : '';
+  }
   async function handleWorkTap() {
     if (state.busy || !state.key || state.isAdmin) return;
+    if (!workGuard) workGuard = (window.WorkGuard && window.WorkGuard.create) ? window.WorkGuard.create() : { tap: () => ({ ok: true }) };
+    const check = workGuard.tap(Date.now());
+    if (!check.ok) {
+      if (check.reason === 'autoclicker') {
+        setWorkStatus('🚫 Обнаружен автокликер. Подожди немного и тапай руками.', true);
+        toast('Анти-автокликер: слишком быстро/ровно. Подожди.', true);
+      } else if (check.reason === 'too-fast') {
+        // тихо игнорируем слишком быстрые тапы
+      } else if (check.reason === 'cooldown') {
+        setWorkStatus('⏳ Подожди ' + Math.ceil(check.remaining / 1000) + ' с...', true);
+      }
+      return;
+    }
+    setWorkStatus('Тапай честно — анти-автокликер следит за скоростью.', false);
+
     state.workTaps += 1;
-    const progress = 10 - (state.workTaps % 10 || 10);
-    // Actually compute remaining taps to next reward
     const remainder = state.workTaps % 10;
-    const toNext = remainder === 0 ? 0 : 10 - remainder;
+    const toNext = remainder === 0 ? 10 : 10 - remainder;
     const progEl = el('work-progress');
     if (progEl) progEl.textContent = toNext === 0 ? 10 : toNext;
     const bar = el('work-bar-fill');
     if (bar) bar.style.width = ((state.workTaps % 10) / 10 * 100) + '%';
+
     if (state.workTaps % 10 === 0) {
-      // earn 1
       setBusy(true);
       const result = await store.workEarn(state.key, 1);
       setBusy(false);
@@ -715,8 +716,16 @@
         if (earnedEl) earnedEl.textContent = `${number(state.sessionEarned)} @`;
         renderHeader();
         toast('⛏️ +1 @ заработано!');
+        setWorkStatus('Отлично! +1 @ начислено.', false);
       } else {
         toast(result.error || 'Не удалось начислить', true);
+        setWorkStatus(result.error || 'Не удалось начислить', true);
+        // откатываем счётчик тапов, чтобы не было рассинхрона
+        state.workTaps = Math.max(0, state.workTaps - 10);
+        const r2 = state.workTaps % 10;
+        const t2 = r2 === 0 ? 10 : 10 - r2;
+        if (progEl) progEl.textContent = t2;
+        if (bar) bar.style.width = (r2 / 10 * 100) + '%';
       }
     }
   }

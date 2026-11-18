@@ -32,7 +32,10 @@
       balance: Number.isFinite(balance) && balance >= 0 ? Math.floor(balance) : 0,
       lastDailyAt: Number.isFinite(user && user.lastDailyAt) ? user.lastDailyAt : 0,
       dailyEnabled: (user && typeof user.dailyEnabled === 'boolean') ? user.dailyEnabled : true,
-      avatar: (user && typeof user.avatar === 'string') ? user.avatar.slice(0, 200000) : '',
+      avatar: (user && typeof user.avatar === 'string' && !user.avatar.toLowerCase().startsWith('data')) ? [...user.avatar.trim()].slice(0, 4).join('') : '',
+      lastWorkEarnAt: Number.isFinite(user && user.lastWorkEarnAt) ? user.lastWorkEarnAt : 0,
+      workEarnHourStart: Number.isFinite(user && user.workEarnHourStart) ? user.workEarnHourStart : 0,
+      workEarnedThisHour: Number.isFinite(user && user.workEarnedThisHour) ? user.workEarnedThisHour : 0,
       recentRecipients: Array.isArray(user && user.recentRecipients) ? user.recentRecipients.filter(v => typeof v === 'string').slice(0, 3) : []
     };
   }
@@ -426,7 +429,9 @@
 
   async function setAvatar(userKey, avatar) {
     const key = normalizeNick(userKey);
-    const val = (typeof avatar === 'string') ? avatar.slice(0, 200000) : '';
+    let raw = (typeof avatar === 'string') ? avatar.trim() : '';
+    if (raw.toLowerCase().startsWith('data:')) raw = '';
+    let val = [...raw].slice(0, 4).join('');
     return withLatest(() => {
       const user = db.users[key];
       if (!user) return { ok: false, error: 'Профиль не найден.' };
@@ -456,8 +461,21 @@
     return withLatest(() => {
       const user = db.users[key];
       if (!user || key === 'admin') return { ok: false, error: 'Профиль не найден.' };
+      const now = Date.now();
+      if (user.lastWorkEarnAt && now - user.lastWorkEarnAt < 800) {
+        return { ok: false, error: 'Слишком быстро. Анти-автокликер.' };
+      }
+      if (!user.workEarnHourStart || now - user.workEarnHourStart > 3600000) {
+        user.workEarnHourStart = now;
+        user.workEarnedThisHour = 0;
+      }
+      if ((user.workEarnedThisHour || 0) + amt > 60) {
+        return { ok: false, error: 'Лимит заработка в час достигнут (60 @). Отдохни.' };
+      }
       if (!Number.isFinite(user.balance)) user.balance = 0;
       user.balance += amt;
+      user.lastWorkEarnAt = now;
+      user.workEarnedThisHour = (user.workEarnedThisHour || 0) + amt;
       addHistory({ type: 'in', userKey: key, peer: 'работа', amount: amt, memo: 'Заработок в «Работе»' });
       return { ok: true, amount: amt, balance: user.balance };
     });
