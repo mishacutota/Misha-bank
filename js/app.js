@@ -5,7 +5,7 @@
   const SESSION_KEY = 'misha-bank-session-v1';
   const store = window.BankStore;
   const el = (id) => document.getElementById(id);
-  const state = { key: null, user: null, sendAmount: 0, adminTargetKey: '', adminAmount: 0, mode: 'login', nextDailyAt: 0, busy: false, isAdmin: false, lastRecipient: '', netDown: false };
+  const state = { key: null, user: null, sendAmount: 0, adminTargetKey: '', adminAmount: 0, mode: 'login', nextDailyAt: 0, busy: false, isAdmin: false, lastRecipient: '', netDown: false, workTaps: 0, settingsOpen: false, pendingAvatar: '', sessionEarned: 0 };
   const number = (value) => new Intl.NumberFormat('ru-RU').format(value);
   let toastTimer = null;
   let dailyTimer = null;
@@ -89,10 +89,14 @@
     el('screen-auth').classList.add('hidden');
     el('screen-bank').classList.remove('hidden');
     state.sendAmount = 0;
+    state.workTaps = 0;
+    state.sessionEarned = 0;
     const amountInput = el('send-amount');
     if (amountInput) amountInput.value = '';
     const toNick = el('to-nick');
     if (toNick) toNick.value = '';
+    const msgInput = el('send-message');
+    if (msgInput) msgInput.value = '';
     updateAdminVisibility();
     if (state.isAdmin) {
       try { await store.purgeTestAccounts(); } catch (_) { /* ignore */ }
@@ -109,11 +113,27 @@
   }
 
   function updateAdminVisibility() {
-    const tab = el('tab-admin');
-    if (tab) tab.classList.toggle('hidden', !state.isAdmin);
-    if (!state.isAdmin && document.querySelector('.tab.active') && document.querySelector('.tab.active').dataset.tab === 'admin') {
-      switchTab('wallet');
+    const tabAdmin = el('tab-admin');
+    if (tabAdmin) tabAdmin.classList.toggle('hidden', !state.isAdmin);
+    const tabWork = el('tab-work');
+    if (tabWork) tabWork.classList.toggle('hidden', state.isAdmin);
+    const tabWallet = document.querySelector('.tab[data-tab="wallet"]');
+    const tabSend = document.querySelector('.tab[data-tab="send"]');
+    if (tabWallet) tabWallet.classList.toggle('hidden', state.isAdmin);
+    if (tabSend) tabSend.classList.toggle('hidden', state.isAdmin);
+    // bank tab always visible
+    if (state.isAdmin) {
+      const active = document.querySelector('.tab.active');
+      if (active && (active.dataset.tab === 'wallet' || active.dataset.tab === 'send' || active.dataset.tab === 'work')) {
+        switchTab('bank');
+      }
+    } else {
+      if (document.querySelector('.tab.active') && document.querySelector('.tab.active').dataset.tab === 'admin') {
+        switchTab('wallet');
+      }
     }
+    const dailyBanner = el('daily-banner');
+    if (dailyBanner) dailyBanner.classList.toggle('hidden', state.isAdmin || !(state.user && state.user.dailyEnabled !== false));
   }
 
   function handleVisibility() {
@@ -124,6 +144,7 @@
     if (!state.key || state.busy) return;
     const user = store.getUser(state.key);
     if (!user) return;
+    if (user.dailyEnabled === false) return;
     if (Date.now() - (user.lastDailyAt || 0) < 86400000) return;
     state.busy = true;
     const result = await store.claimDaily(state.key);
@@ -167,12 +188,26 @@
     document.querySelectorAll('.tab').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
     document.querySelectorAll('[data-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.panel !== tab));
     if (tab === 'admin') renderAdmin();
+    if (tab === 'work') renderWork();
   }
 
   function renderHeader() {
     if (!state.user) return;
     el('user-nick').textContent = state.user.nick;
-    el('user-avatar').textContent = state.user.nick.slice(0, 1).toUpperCase();
+    const avatarNode = el('user-avatar');
+    if (avatarNode) {
+      const av = state.user.avatar || '';
+      if (av.startsWith('data:image')) {
+        avatarNode.innerHTML = `<img src="${av}" alt="" />`;
+        avatarNode.classList.add('avatar-img');
+      } else if (av.trim()) {
+        avatarNode.textContent = av;
+        avatarNode.classList.remove('avatar-img');
+      } else {
+        avatarNode.textContent = state.user.nick.slice(0, 1).toUpperCase();
+        avatarNode.classList.remove('avatar-img');
+      }
+    }
     el('user-since').textContent = 'с нами с ' + new Date(state.user.createdAt).toLocaleDateString('ru-RU');
     const balance = store.total(state.user);
     el('top-balance').textContent = `${number(balance)} @`;
@@ -217,11 +252,22 @@
       if (item.type === 'daily') label = 'Ежедневный бонус';
       if (item.type === 'mint') label = 'Стартовый баланс';
       const sign = item.type === 'out' ? '−' : '+';
+      const msg = item.message ? `<div class="hist-message">💬 ${escapeHtml(item.message)}</div>` : '';
+      let peerAvatar = '';
+      if (item.peer) {
+        const pu = store.findUser(item.peer);
+        const av = (pu && pu.avatar) ? pu.avatar : '';
+        if (av.startsWith('data:image')) peerAvatar = `<img src="${av}" alt="" />`;
+        else if (av.trim()) peerAvatar = escapeHtml(av);
+        else if (pu) peerAvatar = escapeHtml((pu.nick || '?').slice(0,1).toUpperCase());
+      }
+      const avatarHtml = peerAvatar ? `<span class="hist-avatar">${peerAvatar}</span>` : '';
       return `
         <li class="hist-item ${item.type === 'out' ? 'out' : 'in'}">
           <div class="hist-main">
-            <strong>${escapeHtml(label)}</strong>
+            ${avatarHtml}<strong>${escapeHtml(label)}</strong>
             <small>${new Date(item.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>
+            ${msg}
           </div>
           <span class="hist-amount">${sign}${number(amount)} @</span>
         </li>`;
@@ -248,15 +294,29 @@
     const matches = users.filter(u => u.nick.toLowerCase().startsWith(raw) || u.nick.toLowerCase().includes(raw)).slice(0, 8);
     if (!matches.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
     box.classList.remove('hidden');
-    box.innerHTML = matches.map(u =>
-      `<li class="nick-suggestion" data-nick="${escapeHtml(u.nick)}">${escapeHtml(u.nick)}</li>`
-    ).join('');
+    box.innerHTML = matches.map(u => {
+      const av = u.avatar || '';
+      const avHtml = av.startsWith('data:image') ? `<img src="${av}" alt="" />` : (av.trim() ? escapeHtml(av) : escapeHtml(u.nick.slice(0,1).toUpperCase()));
+      return `<li class="nick-suggestion" data-nick="${escapeHtml(u.nick)}"><span class="sug-avatar">${avHtml}</span>${escapeHtml(u.nick)}</li>`;
+    }).join('');
   }
 
   function renderSend() {
     if (!state.user) return;
     renderRecentRecipients();
     updateSendTotals();
+  }
+
+  function renderWork() {
+    if (!state.user) return;
+    const remainder = state.workTaps % 10;
+    const toNext = remainder === 0 ? 10 : 10 - remainder;
+    const progEl = el('work-progress');
+    if (progEl) progEl.textContent = toNext;
+    const bar = el('work-bar-fill');
+    if (bar) bar.style.width = (remainder / 10 * 100) + '%';
+    const earnedEl = el('work-earned');
+    if (earnedEl) earnedEl.textContent = `${number(state.sessionEarned || 0)} @`;
   }
 
   function updateSendTotals() {
@@ -267,7 +327,8 @@
     el('send-total-value').textContent = number(validAmount ? amount : 0);
     el('send-total-count').textContent = validAmount ? `${number(amount)} @` : 'укажи сумму';
     const recipient = store.findUser(el('to-nick').value.trim());
-    const canSend = validAmount && amount <= balance && recipient && recipient.key !== state.key;
+    const isAdminRecipient = recipient && recipient.key === 'admin';
+    const canSend = validAmount && amount <= balance && recipient && recipient.key !== state.key && !isAdminRecipient;
     el('btn-send').disabled = state.busy || !canSend;
     updateRecipientHint(recipient, balance);
   }
@@ -284,7 +345,10 @@
       state.user = store.getUser(state.key);
       recipient = store.findUser(raw);
     }
-    if (recipient && recipient.key !== state.key) {
+    if (recipient && recipient.key === 'admin') {
+      if (hint) hint.textContent = 'Нельзя переводить администратору.';
+      recipient = null;
+    } else if (recipient && recipient.key !== state.key) {
       if (hint) hint.textContent = '';
     } else if (recipient && recipient.key === state.key) {
       if (hint) hint.textContent = 'Это твой счёт 🙂 Выбери другого игрока.';
@@ -304,6 +368,11 @@
       note.textContent = 'Проверь ник. Переводы доступны всем игрокам.';
       return;
     }
+    if (recipient.key === 'admin') {
+      hint.textContent = 'Нельзя переводить администратору.';
+      note.textContent = '';
+      return;
+    }
     if (recipient.key === state.key) {
       hint.textContent = 'Это твой счёт 🙂 Выбери другого игрока.';
       note.textContent = '';
@@ -317,21 +386,24 @@
     if (state.busy) return;
     const raw = el('to-nick').value.trim();
     const amount = Number(el('send-amount').value);
+    const message = (el('send-message') ? el('send-message').value : '').trim().slice(0, 200);
     if (!Number.isInteger(amount) || amount <= 0) { toast('Укажи сумму перевода', true); return; }
+    if (raw.toLowerCase() === 'admin') { toast('Нельзя переводить администратору', true); return; }
     await store.pull();
     state.user = store.getUser(state.key);
     const recipient = store.findUser(raw);
-    if (!recipient || recipient.key === state.key) { toast('Проверь ник получателя', true); updateSendTotals(); return; }
+    if (!recipient || recipient.key === state.key || recipient.key === 'admin') { toast('Проверь ник получателя', true); updateSendTotals(); return; }
     if (amount > store.total(state.user)) { toast('Недостаточно @', true); return; }
     state.lastRecipient = raw;
     setBusy(true);
     el('btn-send').disabled = true;
-    const result = await store.transfer(state.key, raw, amount);
+    const result = await store.transfer(state.key, raw, amount, message);
     setBusy(false);
     if (!result.ok) { toast(result.error, true); updateSendTotals(); return; }
     state.user = store.getUser(state.key);
     el('send-amount').value = '';
     el('to-nick').value = '';
+    if (el('send-message')) el('send-message').value = '';
     renderAll();
     toast(`@ отправлены игроку ${recipient.nick}!`);
   }
@@ -339,12 +411,17 @@
   function renderBank() {
     const top = store.getLeaderboard();
     el('leaderboard').innerHTML = top.length
-      ? top.map((row, index) => `
+      ? top.map((row, index) => {
+          const av = row.avatar || '';
+          const avatarHtml = av.startsWith('data:image') ? `<img src="${av}" alt="" />` : (av.trim() ? escapeHtml(av) : escapeHtml(row.nick.slice(0,1).toUpperCase()));
+          return `
           <li class="${row.key === state.key ? 'me' : ''}">
             <span class="lb-rank">${index + 1}</span>
+            <span class="lb-avatar">${avatarHtml}</span>
             <span class="lb-nick">${escapeHtml(row.nick)}</span>
             <span class="lb-sum">${number(row.value)} @</span>
-          </li>`).join('')
+          </li>`;
+        }).join('')
       : '<li><span class="lb-nick muted">Пока один ты</span></li>';
   }
 
@@ -375,7 +452,7 @@
     profile.innerHTML = `
       <div class="admin-profile-card">
         <div class="admin-profile-main">
-          <div class="avatar">${escapeHtml(user.nick.slice(0, 1).toUpperCase())}</div>
+          <div class="avatar">${user.avatar && user.avatar.startsWith('data:image') ? `<img src="${user.avatar}" alt="" />` : escapeHtml((user.avatar && user.avatar.trim()) ? user.avatar : user.nick.slice(0, 1).toUpperCase())}</div>
           <div class="admin-profile-meta">
             <strong>${escapeHtml(user.nick)}</strong>
             <span class="muted small">с нами с ${new Date(user.createdAt).toLocaleDateString('ru-RU')} · баланс ${number(store.total(user))} @</span>
@@ -448,11 +525,10 @@
     renderHeader();
     renderWallet();
     renderSend();
+    renderWork();
     renderBank();
     if (state.isAdmin && document.querySelector('[data-panel="admin"]:not(.hidden)')) renderAdmin();
-    if (state.key && !el('to-nick').value && state.lastRecipient) {
-      el('to-nick').value = state.lastRecipient;
-    }
+    updateAdminVisibility();
   }
 
   function exportJson() {
@@ -489,6 +565,167 @@
     reader.readAsText(file);
   }
 
+  const AVATAR_EMOJIS = ['😀','😎','🤖','🐱','🐶','🦊','🐼','🐯','🐸','🐵','🦄','👽','👻','🧛','🥷','🧙','👑','🔥','⚡','🌟','💎','🎯','🚀','🎮','⚽','🏀','🏆','🍕','🍩','☕','🎵'];
+
+  function openSettings() {
+    if (!state.key) return;
+    state.settingsOpen = true;
+    state.pendingAvatar = (state.user && state.user.avatar) ? state.user.avatar : '';
+    const modal = el('settings-modal');
+    if (modal) modal.classList.remove('hidden');
+    renderSettings();
+  }
+
+  function closeSettings() {
+    state.settingsOpen = false;
+    const modal = el('settings-modal');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  function renderSettings() {
+    if (!state.user) return;
+    const preview = el('settings-avatar-preview');
+    if (preview) {
+      const av = state.pendingAvatar || state.user.avatar || '';
+      if (av.startsWith('data:image')) {
+        preview.innerHTML = `<img src="${av}" alt="" />`;
+      } else if (av.trim()) {
+        preview.textContent = av;
+      } else {
+        preview.textContent = state.user.nick.slice(0, 1).toUpperCase();
+      }
+    }
+    const choices = el('avatar-choices');
+    if (choices) {
+      choices.innerHTML = AVATAR_EMOJIS.map(e =>
+        `<button type="button" class="avatar-choice ${state.pendingAvatar === e ? 'selected' : ''}" data-emoji="${escapeHtml(e)}">${e}</button>`
+      ).join('');
+    }
+    const toggle = el('settings-daily-toggle');
+    if (toggle) toggle.checked = state.user.dailyEnabled !== false;
+    const oldPin = el('settings-old-pin'); if (oldPin) oldPin.value = '';
+    const newPin = el('settings-new-pin'); if (newPin) newPin.value = '';
+  }
+
+  async function saveAvatar() {
+    if (state.busy || !state.key) return;
+    setBusy(true);
+    const result = await store.setAvatar(state.key, state.pendingAvatar);
+    setBusy(false);
+    if (!result.ok) { toast(result.error, true); return; }
+    state.user = store.getUser(state.key);
+    renderAll();
+    renderSettings();
+    toast('Аватар сохранён');
+  }
+
+  async function changePin() {
+    if (state.busy || !state.key) return;
+    const oldPin = el('settings-old-pin').value.trim();
+    const newPin = el('settings-new-pin').value.trim();
+    if (!oldPin || !newPin) { toast('Заполни оба поля', true); return; }
+    setBusy(true);
+    const result = await store.changePin(state.key, oldPin, newPin);
+    setBusy(false);
+    if (!result.ok) { toast(result.error, true); return; }
+    toast('ПИН-код изменён');
+    el('settings-old-pin').value = '';
+    el('settings-new-pin').value = '';
+  }
+
+  async function saveDailySetting() {
+    if (state.busy || !state.key) return;
+    const enabled = el('settings-daily-toggle').checked;
+    setBusy(true);
+    const result = await store.setDailyEnabled(state.key, enabled);
+    setBusy(false);
+    if (!result.ok) { toast(result.error, true); return; }
+    state.user = store.getUser(state.key);
+    updateAdminVisibility();
+    renderAll();
+    toast(enabled ? 'Ежедневный бонус включён' : 'Ежедневный бонус выключен');
+  }
+
+  function bindSettings() {
+    const btnSettings = el('btn-settings');
+    if (btnSettings) btnSettings.addEventListener('click', openSettings);
+    const btnClose = el('btn-close-settings');
+    if (btnClose) btnClose.addEventListener('click', closeSettings);
+    const modal = el('settings-modal');
+    if (modal) modal.addEventListener('click', event => {
+      if (event.target === modal) closeSettings();
+    });
+
+    const choices = el('avatar-choices');
+    if (choices) choices.addEventListener('click', event => {
+      const btn = event.target.closest('.avatar-choice');
+      if (!btn) return;
+      state.pendingAvatar = btn.dataset.emoji;
+      renderSettings();
+    });
+
+    const fileInput = el('settings-avatar-file');
+    if (fileInput) fileInput.addEventListener('change', event => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      if (file.size > 120 * 1024) { toast('Картинка слишком большая (макс 120 КБ)', true); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        state.pendingAvatar = String(reader.result || '');
+        renderSettings();
+      };
+      reader.readAsDataURL(file);
+    });
+
+    const btnSaveAvatar = el('btn-save-avatar');
+    if (btnSaveAvatar) btnSaveAvatar.addEventListener('click', saveAvatar);
+    const btnResetAvatar = el('btn-reset-avatar');
+    if (btnResetAvatar) btnResetAvatar.addEventListener('click', () => { state.pendingAvatar = ''; renderSettings(); });
+
+    const btnChangePin = el('btn-change-pin');
+    if (btnChangePin) btnChangePin.addEventListener('click', changePin);
+    const btnSaveDaily = el('btn-save-daily');
+    if (btnSaveDaily) btnSaveDaily.addEventListener('click', saveDailySetting);
+    const btnRefreshData = el('btn-refresh-data');
+    if (btnRefreshData) btnRefreshData.addEventListener('click', () => syncFromServer(true));
+  }
+
+  // Work clicker
+  let workTapTimer = null;
+  async function handleWorkTap() {
+    if (state.busy || !state.key || state.isAdmin) return;
+    state.workTaps += 1;
+    const progress = 10 - (state.workTaps % 10 || 10);
+    // Actually compute remaining taps to next reward
+    const remainder = state.workTaps % 10;
+    const toNext = remainder === 0 ? 0 : 10 - remainder;
+    const progEl = el('work-progress');
+    if (progEl) progEl.textContent = toNext === 0 ? 10 : toNext;
+    const bar = el('work-bar-fill');
+    if (bar) bar.style.width = ((state.workTaps % 10) / 10 * 100) + '%';
+    if (state.workTaps % 10 === 0) {
+      // earn 1
+      setBusy(true);
+      const result = await store.workEarn(state.key, 1);
+      setBusy(false);
+      if (result.ok) {
+        state.user = store.getUser(state.key);
+        state.sessionEarned = (state.sessionEarned || 0) + 1;
+        const earnedEl = el('work-earned');
+        if (earnedEl) earnedEl.textContent = `${number(state.sessionEarned)} @`;
+        renderHeader();
+        toast('⛏️ +1 @ заработано!');
+      } else {
+        toast(result.error || 'Не удалось начислить', true);
+      }
+    }
+  }
+
+  function bindWork() {
+    const btn = el('work-tap');
+    if (btn) btn.addEventListener('click', handleWorkTap);
+  }
+
   function bind() {
     document.querySelectorAll('.switch-btn').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     el('auth-form').addEventListener('submit', handleAuth);
@@ -515,8 +752,6 @@
       amountInput.addEventListener('input', () => updateSendTotals());
     }
     el('btn-send').addEventListener('click', doTransfer);
-    const refresh = el('btn-refresh');
-    if (refresh) refresh.addEventListener('click', () => syncFromServer(true));
 
     const sug = el('nick-suggestions');
     if (sug) sug.addEventListener('click', event => {
@@ -567,6 +802,19 @@
 
     const btnClearHistory = el('btn-clear-history');
     if (btnClearHistory) btnClearHistory.addEventListener('click', doClearHistory);
+
+    bindSettings();
+    bindWork();
+
+    const msgInput = el('send-message');
+    if (msgInput) {
+      msgInput.addEventListener('input', () => {
+        const counter = el('send-message-count');
+        if (counter) counter.textContent = `${msgInput.value.length} / 200`;
+      });
+    }
+
+    // work tab progress init handled in render
   }
 
   let booted = false;

@@ -62,7 +62,7 @@
             <span class="balance-label">баланс</span>
             <strong id="top-balance">0 @</strong>
           </div>
-          <button id="btn-refresh" class="btn ghost small" type="button" title="Обновить данные">↻</button>
+          <button id="btn-settings" class="btn ghost small" type="button" title="Настройки">⚙</button>
           <button id="btn-logout" class="btn ghost" type="button">Выйти</button>
         </div>
       </header>
@@ -89,6 +89,7 @@
       <nav class="tabs" role="tablist">
         <button class="tab active" data-tab="wallet" type="button">Счёт</button>
         <button class="tab" data-tab="send" type="button">Перевести</button>
+        <button class="tab hidden" data-tab="work" type="button" id="tab-work">Работа</button>
         <button class="tab" data-tab="bank" type="button">Топ</button>
         <button class="tab hidden" data-tab="admin" type="button" id="tab-admin">Админ</button>
       </nav>
@@ -139,8 +140,45 @@
           <span id="send-total-count" class="muted small">укажи сумму</span>
         </div>
 
+        <label class="field">
+          <span>Сообщение (необязательно, до 200 символов)</span>
+          <textarea id="send-message" maxlength="200" rows="2" placeholder="Привет! Это тебе за..."></textarea>
+          <small id="send-message-count" class="muted small">0 / 200</small>
+        </label>
+
         <button id="btn-send" class="btn primary wide" type="button" disabled>Перевести @</button>
         <p class="note">Средства сразу списываются и зачисляются получателю. Без комиссий.</p>
+      </section>
+
+      <!-- ---------- РАБОТА ---------- -->
+      <section class="panel hidden" data-panel="work">
+        <div class="work-card">
+          <div class="work-head">
+            <span class="work-emoji">⛏️</span>
+            <div>
+              <h3 class="section-title">Работа</h3>
+              <p class="muted small">Тапай по кнопке. За каждые 10 тапов начисляется 1 @.</p>
+            </div>
+          </div>
+          <div class="work-tapzone">
+            <button id="work-tap" class="work-tap-btn" type="button">
+              <span class="work-tap-emoji">👆</span>
+              <span class="work-tap-text">ТАП!</span>
+            </button>
+          </div>
+          <div class="work-stats">
+            <div class="work-stat">
+              <span class="muted small">тапов до награды</span>
+              <strong id="work-progress">10</strong>
+            </div>
+            <div class="work-stat">
+              <span class="muted small">заработано за сессию</span>
+              <strong id="work-earned">0 @</strong>
+            </div>
+          </div>
+          <div class="work-bar"><div id="work-bar-fill" class="work-bar-fill"></div></div>
+          <p class="note">Награда начисляется сразу на твой счёт. Без лимитов.</p>
+        </div>
       </section>
 
       <!-- ---------- ТОП ---------- -->
@@ -174,6 +212,57 @@
       </section>
     </section>
   </main>
+
+  <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 class="section-title">Настройки</h3>
+        <button id="btn-close-settings" class="btn ghost small" type="button">✕</button>
+      </div>
+
+      <div class="settings-section">
+        <h4 class="settings-title">Аватар</h4>
+        <div class="avatar-picker">
+          <div class="avatar-preview" id="settings-avatar-preview">M</div>
+          <div class="avatar-choices" id="avatar-choices"></div>
+        </div>
+        <label class="field">
+          <span>Или загрузи картинку</span>
+          <input id="settings-avatar-file" type="file" accept="image/*" />
+        </label>
+        <div class="settings-actions">
+          <button id="btn-save-avatar" class="btn primary small" type="button">Сохранить аватар</button>
+          <button id="btn-reset-avatar" class="btn ghost small" type="button">Сбросить</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h4 class="settings-title">Пароль</h4>
+        <label class="field">
+          <span>Старый ПИН-код</span>
+          <input id="settings-old-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••" />
+        </label>
+        <label class="field">
+          <span>Новый ПИН-код (4–6 цифр)</span>
+          <input id="settings-new-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••" />
+        </label>
+        <button id="btn-change-pin" class="btn primary small" type="button">Сменить ПИН-код</button>
+      </div>
+
+      <div class="settings-section">
+        <h4 class="settings-title">Ежедневный бонус</h4>
+        <label class="settings-toggle">
+          <input id="settings-daily-toggle" type="checkbox" />
+          <span>Получать ежедневный бонус автоматически</span>
+        </label>
+        <button id="btn-save-daily" class="btn primary small" type="button">Сохранить</button>
+      </div>
+
+      <div class="settings-section">
+        <button id="btn-refresh-data" class="btn ghost small" type="button">↻ Обновить данные</button>
+      </div>
+    </div>
+  </div>
 
   <div id="toast" class="toast"></div>
   <div id="offline-overlay" class="offline-overlay hidden">

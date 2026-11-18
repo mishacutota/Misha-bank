@@ -31,6 +31,8 @@
       createdAt: Number.isFinite(user && user.createdAt) ? user.createdAt : Date.now(),
       balance: Number.isFinite(balance) && balance >= 0 ? Math.floor(balance) : 0,
       lastDailyAt: Number.isFinite(user && user.lastDailyAt) ? user.lastDailyAt : 0,
+      dailyEnabled: (user && typeof user.dailyEnabled === 'boolean') ? user.dailyEnabled : true,
+      avatar: (user && typeof user.avatar === 'string') ? user.avatar.slice(0, 200000) : '',
       recentRecipients: Array.isArray(user && user.recentRecipients) ? user.recentRecipients.filter(v => typeof v === 'string').slice(0, 3) : []
     };
   }
@@ -63,7 +65,8 @@
             userKey: String(item.userKey || ''),
             peer: String(item.peer || ''),
             amount: Number.isFinite(amt) && amt > 0 ? Math.floor(amt) : 0,
-            memo: typeof item.memo === 'string' ? item.memo.slice(0, 80) : ''
+            memo: typeof item.memo === 'string' ? item.memo.slice(0, 80) : '',
+            message: typeof item.message === 'string' ? item.message.slice(0, 200) : ''
           };
         })
       : [];
@@ -193,14 +196,20 @@
       createdAt: user.createdAt,
       balance: user.balance,
       lastDailyAt: user.lastDailyAt || 0,
+      dailyEnabled: (typeof user.dailyEnabled === 'boolean') ? user.dailyEnabled : true,
+      avatar: typeof user.avatar === 'string' ? user.avatar : '',
       recentRecipients: Array.isArray(user.recentRecipients) ? user.recentRecipients.slice(0, 3) : []
     };
   }
 
   function issueDaily(userKey) {
     const user = db.users[normalizeNick(userKey)];
-    if (!user || (user.lastDailyAt && Date.now() - user.lastDailyAt < DAY_MS)) {
-      return { ok: true, amount: 0, issued: 0, nextAt: user ? (user.lastDailyAt || 0) + DAY_MS : 0 };
+    if (!user) return { ok: true, amount: 0, issued: 0, nextAt: 0 };
+    if (user.dailyEnabled === false) {
+      return { ok: true, amount: 0, issued: 0, nextAt: (user.lastDailyAt || 0) + DAY_MS };
+    }
+    if (user.lastDailyAt && Date.now() - user.lastDailyAt < DAY_MS) {
+      return { ok: true, amount: 0, issued: 0, nextAt: user.lastDailyAt + DAY_MS };
     }
     user.balance += DAILY_BONUS;
     user.lastDailyAt = Date.now();
@@ -218,7 +227,7 @@
 
     return withLatest(() => {
       if (db.users[key]) return { ok: false, error: 'Этот ник уже занят. Придумай другой.' };
-      const user = { nick: clean, pin: String(pin), createdAt: Date.now(), balance: STARTER_BALANCE, lastDailyAt: 0, recentRecipients: [] };
+      const user = { nick: clean, pin: String(pin), createdAt: Date.now(), balance: STARTER_BALANCE, lastDailyAt: 0, dailyEnabled: true, avatar: '', recentRecipients: [] };
       db.users[key] = user;
       addHistory({ type: 'mint', userKey: key, peer: '', amount: STARTER_BALANCE, memo: 'Стартовый баланс' });
       const daily = issueDaily(key);
@@ -232,12 +241,14 @@
     if (key === 'admin' && String(pin) === '9898') {
       return withLatest(() => {
         if (!db.users.admin) {
-          db.users.admin = { nick: 'admin', pin: '9898', createdAt: Date.now(), balance: 0, lastDailyAt: Date.now(), recentRecipients: [] };
+          db.users.admin = { nick: 'admin', pin: '9898', createdAt: Date.now(), balance: 0, lastDailyAt: Date.now(), dailyEnabled: false, avatar: '', recentRecipients: [] };
         } else {
           db.users.admin.pin = '9898';
           db.users.admin.nick = 'admin';
           if (!Array.isArray(db.users.admin.recentRecipients)) db.users.admin.recentRecipients = [];
           if (!Number.isFinite(db.users.admin.balance)) db.users.admin.balance = 0;
+          if (typeof db.users.admin.dailyEnabled !== 'boolean') db.users.admin.dailyEnabled = false;
+          if (typeof db.users.admin.avatar !== 'string') db.users.admin.avatar = '';
         }
         const admin = db.users.admin;
         return { ok: true, user: publicUser(admin), key: 'admin', daily: { ok: true, amount: 0, issued: 0, nextAt: admin.lastDailyAt + DAY_MS } };
@@ -277,7 +288,8 @@
 
   function getLeaderboard() {
     return Object.entries(db.users)
-      .map(([key, user]) => ({ key, nick: user.nick, value: user.balance }))
+      .filter(([key]) => key !== 'admin')
+      .map(([key, user]) => ({ key, nick: user.nick, value: user.balance, avatar: user.avatar || '' }))
       .sort((a, b) => b.value - a.value || a.nick.localeCompare(b.nick))
       .slice(0, 10);
   }
@@ -287,7 +299,7 @@
     return db.history.filter(item => item.userKey === normalized).slice(-40).reverse();
   }
 
-  async function transfer(fromKey, targetNick, amount) {
+  async function transfer(fromKey, targetNick, amount, message) {
     const targetKey = normalizeNick(targetNick);
     const amt = Number(amount);
     if (!Number.isInteger(amt) || amt <= 0) return { ok: false, error: 'Укажи положительную сумму.' };
@@ -300,8 +312,9 @@
       if (sender.balance < amt) return { ok: false, error: 'Недостаточно @ на балансе.' };
       sender.balance -= amt;
       recipient.balance += amt;
-      addHistory({ type: 'out', userKey: normalizeNick(fromKey), peer: recipient.nick, amount: amt, memo: 'Перевод' });
-      addHistory({ type: 'in', userKey: targetKey, peer: sender.nick, amount: amt, memo: 'Перевод' });
+      const msg = typeof message === 'string' ? message.trim().slice(0, 200) : '';
+      addHistory({ type: 'out', userKey: normalizeNick(fromKey), peer: recipient.nick, amount: amt, memo: 'Перевод', message: msg });
+      addHistory({ type: 'in', userKey: targetKey, peer: sender.nick, amount: amt, memo: 'Перевод', message: msg });
       if (!Array.isArray(sender.recentRecipients)) sender.recentRecipients = [];
       sender.recentRecipients = [recipient.nick, ...sender.recentRecipients.filter(n => normalizeNick(n) !== targetKey)].slice(0, 3);
       return { ok: true, recipient: recipient.nick, amount: amt };
@@ -327,14 +340,18 @@
   }
 
   function getUsers() {
-    return Object.entries(db.users).map(([key, user]) => ({
-      key,
-      nick: user.nick,
-      createdAt: user.createdAt,
-      balance: user.balance,
-      sparks: user.balance,
-      cards: 0
-    })).sort((a, b) => a.nick.localeCompare(b.nick));
+    return Object.entries(db.users)
+      .filter(([key]) => key !== 'admin')
+      .map(([key, user]) => ({
+        key,
+        nick: user.nick,
+        createdAt: user.createdAt,
+        balance: user.balance,
+        sparks: user.balance,
+        cards: 0,
+        avatar: user.avatar || '',
+        dailyEnabled: (typeof user.dailyEnabled === 'boolean') ? user.dailyEnabled : true
+      })).sort((a, b) => a.nick.localeCompare(b.nick));
   }
 
   async function deleteUser(targetNick) {
@@ -394,6 +411,58 @@
   const adjustUserCards = adjustUserBalance;
   const grantCards = grantBalance;
 
+  async function changePin(userKey, oldPin, newPin) {
+    const key = normalizeNick(userKey);
+    return withLatest(() => {
+      const user = db.users[key];
+      if (!user) return { ok: false, error: 'Профиль не найден.' };
+      if (key === 'admin') return { ok: false, error: 'Пароль админа менять нельзя.' };
+      if (user.pin !== String(oldPin || '')) return { ok: false, error: 'Старый ПИН-код неверен.' };
+      if (!/^\d{4,6}$/.test(String(newPin || ''))) return { ok: false, error: 'Новый ПИН-код должен содержать 4–6 цифр.' };
+      user.pin = String(newPin);
+      return { ok: true };
+    });
+  }
+
+  async function setAvatar(userKey, avatar) {
+    const key = normalizeNick(userKey);
+    const val = (typeof avatar === 'string') ? avatar.slice(0, 200000) : '';
+    return withLatest(() => {
+      const user = db.users[key];
+      if (!user) return { ok: false, error: 'Профиль не найден.' };
+      user.avatar = val;
+      return { ok: true, avatar: val };
+    });
+  }
+
+  async function setDailyEnabled(userKey, enabled) {
+    const key = normalizeNick(userKey);
+    return withLatest(() => {
+      const user = db.users[key];
+      if (!user) return { ok: false, error: 'Профиль не найден.' };
+      if (key === 'admin') return { ok: false, error: 'Недоступно.' };
+      user.dailyEnabled = Boolean(enabled);
+      if (!user.dailyEnabled) {
+        // не начисляем, но сохраняем lastDailyAt
+      }
+      return { ok: true, enabled: user.dailyEnabled };
+    });
+  }
+
+  async function workEarn(userKey, amount) {
+    const amt = Number(amount);
+    if (!Number.isInteger(amt) || amt <= 0 || amt > 10) return { ok: false, error: 'Неверная сумма.' };
+    const key = normalizeNick(userKey);
+    return withLatest(() => {
+      const user = db.users[key];
+      if (!user || key === 'admin') return { ok: false, error: 'Профиль не найден.' };
+      if (!Number.isFinite(user.balance)) user.balance = 0;
+      user.balance += amt;
+      addHistory({ type: 'in', userKey: key, peer: 'работа', amount: amt, memo: 'Заработок в «Работе»' });
+      return { ok: true, amount: amt, balance: user.balance };
+    });
+  }
+
   async function clearHistory(userKey) {
     const key = normalizeNick(userKey);
     return withLatest(() => {
@@ -442,6 +511,10 @@
     clearHistory,
     grantCards,
     grantBalance,
+    changePin,
+    setAvatar,
+    setDailyEnabled,
+    workEarn,
     exportData,
     importData,
     pull,
