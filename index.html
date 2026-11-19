@@ -180,6 +180,16 @@
           </div>
         <div class="work-bar"><div id="work-bar-fill" class="work-bar-fill"></div></div>
         <p id="work-status" class="note">Тапай честно — анти-автокликер следит за скоростью.</p>
+
+        <div class="work-limit">
+          <div class="work-limit-head">
+            <span class="muted small">заработано за час</span>
+            <strong><span id="work-hour-earned">0</span> / <span id="work-hour-limit">60</span> @</strong>
+          </div>
+          <div class="work-bar"><div id="work-hour-bar-fill" class="work-bar-fill"></div></div>
+          <p class="muted small">Уровень лимита: <strong id="work-limit-level">1</strong> · следующий стоит <strong id="work-limit-cost">1000</strong> @</p>
+          <button id="btn-work-limit-upgrade" class="btn primary small" type="button">Улучшить лимит</button>
+        </div>
         </div>
       </section>
 
@@ -191,6 +201,7 @@
          <div class="game-card">
            <h4>🏦 Депозит</h4>
            <p class="muted small">На депозите: <strong id="deposit-amount">0</strong> @ · процент <strong>0.03472%</strong> в час</p>
+           <p class="muted small">Накоплено процентов: <strong id="deposit-accrued">0</strong> @</p>
            <div class="field">
              <label for="deposit-input">Сумма</label>
              <input id="deposit-input" type="number" min="1" step="1" placeholder="сколько положить" />
@@ -198,8 +209,9 @@
            <div class="btn-row">
              <button id="btn-deposit" class="btn primary small" type="button">Положить</button>
              <button id="btn-withdraw" class="btn ghost small" type="button">Снять</button>
-             <button id="btn-accrue" class="btn ghost small" type="button">Начислить проценты</button>
+             <button id="btn-claim-deposit" class="btn primary small" type="button">Забрать проценты на баланс</button>
            </div>
+           <p class="muted small">Проценты копятся сами — на баланс они попадают только когда ты заберёшь их сам.</p>
          </div>
 
          <div class="game-card">
@@ -207,8 +219,9 @@
            <p class="muted small">Уровень: <strong id="hourly-level">0</strong> · доход: <strong id="hourly-rate">0</strong> @/час</p>
            <p class="muted small">Следующий уровень стоит <strong id="hourly-cost">800</strong> @</p>
            <button id="btn-hourly-upgrade" class="btn primary small" type="button">Купить улучшение</button>
-           <button id="btn-claim-hourly" class="btn ghost small" type="button">Забрать накопленное</button>
            <p class="muted small">Накоплено: <strong id="hourly-accrued">0</strong> @</p>
+           <button id="btn-claim-hourly" class="btn primary small" type="button">Забрать на баланс</button>
+           <p class="muted small">Доход копится сам — на баланс он попадает только когда ты заберёшь его сам.</p>
          </div>
        </section>
 

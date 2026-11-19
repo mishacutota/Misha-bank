@@ -112,7 +112,7 @@
     renderAll();
     switchTab('wallet');
     clearInterval(dailyTimer);
-    dailyTimer = setInterval(() => { renderDaily(); tryAutoDaily(); (async () => { if (state.key) { await store.accruePassive(state.key); state.user = store.getUser(state.key); renderHeader(); renderDeposit(); } })(); }, 15000);
+    dailyTimer = setInterval(() => { renderDaily(); tryAutoDaily(); if (state.key) { renderWork(); renderDeposit(); } }, 15000);
     clearInterval(syncTimer);
     syncTimer = setInterval(() => { if (document.visibilityState === 'visible') syncFromServer(false); }, 30000);
     document.removeEventListener('visibilitychange', handleVisibility);
@@ -321,6 +321,29 @@
     if (bar) bar.style.width = (remainder / 10 * 100) + '%';
     const earnedEl = el('work-earned');
     if (earnedEl) earnedEl.textContent = `${number(state.sessionEarned || 0)} @`;
+
+    const u = state.user;
+    const limit = store.workHourlyLimit ? store.workHourlyLimit(u) : 60;
+    const hourFresh = !u.workEarnHourStart || Date.now() - u.workEarnHourStart > 3600000;
+    const earnedHour = Math.min(hourFresh ? 0 : (u.workEarnedThisHour || 0), limit);
+    const hourEarnedEl = el('work-hour-earned');
+    if (hourEarnedEl) hourEarnedEl.textContent = number(earnedHour);
+    const hourLimitEl = el('work-hour-limit');
+    if (hourLimitEl) hourLimitEl.textContent = number(limit);
+    const hourBar = el('work-hour-bar-fill');
+    if (hourBar) hourBar.style.width = Math.min(100, Math.round((earnedHour / limit) * 100)) + '%';
+    const lvl = u.workLimitLevel || 1;
+    const limitLvlEl = el('work-limit-level');
+    if (limitLvlEl) limitLvlEl.textContent = lvl;
+    const costs = store.WORK_LIMIT_COSTS || [0, 1000, 3000, 8000, 20000];
+    const maxed = lvl >= costs.length;
+    const limitCostEl = el('work-limit-cost');
+    if (limitCostEl) limitCostEl.textContent = maxed ? 'макс' : number(costs[lvl] || 0);
+    const btnLimit = el('btn-work-limit-upgrade');
+    if (btnLimit) {
+      btnLimit.disabled = state.busy || maxed || (u.balance || 0) < (maxed ? 0 : (costs[lvl] || 0));
+      btnLimit.textContent = maxed ? 'Максимальный лимит' : 'Улучшить лимит';
+    }
   }
 
   function achTitle(id) {
@@ -398,11 +421,32 @@
     setStat('stat-best', u.biggestWin);
   }
 
+  // Сколько уже накопилось с момента последнего начисления (то, что реально заберётся).
+  function estimatePending(user) {
+    const now = Date.now();
+    let depositPending = user.depositPending || 0;
+    const depositPerHour = (user.deposit || 0) * 0.0003472;
+    const depositLast = user.depositLastAccrual || now;
+    if (depositPerHour > 0 && now > depositLast) {
+      depositPending += Math.floor(depositPerHour * (now - depositLast) / 3600000);
+    }
+    let hourlyPending = user.hourlyPending || 0;
+    const hourlyRate = user.hourlyRate || 0;
+    const hourlyLast = user.hourlyLastAccrual || now;
+    if (hourlyRate > 0 && now > hourlyLast) {
+      hourlyPending += Math.floor(hourlyRate * (now - hourlyLast) / 3600000);
+    }
+    return { depositPending, hourlyPending };
+  }
+
   function renderDeposit() {
     if (!state.user) return;
     const u = state.user;
+    const pending = estimatePending(u);
     const depEl = el('deposit-amount');
     if (depEl) depEl.textContent = number(u.deposit || 0);
+    const depAccEl = el('deposit-accrued');
+    if (depAccEl) depAccEl.textContent = number(pending.depositPending);
     const lvlEl = el('hourly-level');
     if (lvlEl) lvlEl.textContent = u.hourlyLevel || 0;
     const rateEl = el('hourly-rate');
@@ -413,13 +457,12 @@
     if (costEl) costEl.textContent = (lvl >= 5) ? 'макс' : number(costs[lvl + 1] || 0);
     const btnUp = el('btn-hourly-upgrade');
     if (btnUp) btnUp.disabled = state.busy || lvl >= 5 || (u.balance || 0) < (lvl < 5 ? (costs[lvl+1]||0) : 0);
-    // accrued estimate
-    const now = Date.now();
-    const last = u.hourlyLastAccrual || now;
-    const hours = (now - last) / 3600000;
-    const accrued = Math.floor((u.hourlyRate || 0) * hours);
     const accEl = el('hourly-accrued');
-    if (accEl) accEl.textContent = number(accrued);
+    if (accEl) accEl.textContent = number(pending.hourlyPending);
+    const btnClaim = el('btn-claim-hourly');
+    if (btnClaim) btnClaim.disabled = state.busy || pending.hourlyPending <= 0;
+    const btnClaimDep = el('btn-claim-deposit');
+    if (btnClaimDep) btnClaimDep.disabled = state.busy || pending.depositPending <= 0;
   }
 
   function updateSendTotals() {
@@ -824,13 +867,14 @@
         state.sessionEarned = (state.sessionEarned || 0) + reward;
         const earnedEl = el('work-earned');
         if (earnedEl) earnedEl.textContent = `${number(state.sessionEarned)} @`;
-        renderHeader();
+        renderHeader(); renderWork();
         toast('⛏️ +' + reward + ' @ заработано!');
         setWorkStatus('Отлично! +' + reward + ' @ начислено.', false);
         if (result.newAchievements && result.newAchievements.length) {
           for (const a of result.newAchievements) toast('🏆 Достижение: ' + achTitle(a));
         }
       } else {
+        renderWork();
         toast(result.error, true);
         setWorkStatus(result.error, true);
       }
@@ -840,6 +884,19 @@
   function bindWork() {
     const btn = el('work-tap');
     if (btn) btn.addEventListener('click', handleWorkTap);
+    const btnLimit = el('btn-work-limit-upgrade');
+    if (btnLimit) btnLimit.addEventListener('click', async () => {
+      if (state.busy || !state.key) return;
+      setBusy(true);
+      const r = await store.buyWorkLimitUpgrade(state.key);
+      setBusy(false);
+      if (r.ok) {
+        state.user = store.getUser(state.key);
+        renderHeader(); renderWork(); renderGames();
+        toast('⛏️ Лимит работы: ' + number(r.limit) + ' @/час');
+        if (r.newAchievements && r.newAchievements.length) for (const a of r.newAchievements) toast('🏆 Достижение: ' + achTitle(a));
+      } else toast(r.error, true);
+    });
   }
 
   function bindGames() {
@@ -924,16 +981,16 @@
          toast('💸 Снято ' + number(r.amount) + ' @ с депозита');
        } else toast(r.error, true);
      });
-     const btnAcc = el('btn-accrue');
-     if (btnAcc) btnAcc.addEventListener('click', async () => {
+     const btnClaimDep = el('btn-claim-deposit');
+     if (btnClaimDep) btnClaimDep.addEventListener('click', async () => {
        setBusy(true);
-       const r = await store.accruePassive(state.key);
+       const r = await store.claimDepositInterest(state.key);
        setBusy(false);
        if (r.ok) {
          state.user = store.getUser(state.key);
          renderHeader(); renderDeposit();
-         toast('📈 Проценты начислены');
-       } else toast(r.error || 'Ошибка', true);
+         toast('🏦 +' + number(r.amount) + ' @ процентов на баланс');
+       } else toast(r.error, true);
      });
      const btnHr = el('btn-hourly-upgrade');
      if (btnHr) btnHr.addEventListener('click', async () => {
@@ -949,13 +1006,13 @@
      const btnClaimHr = el('btn-claim-hourly');
      if (btnClaimHr) btnClaimHr.addEventListener('click', async () => {
        setBusy(true);
-       const r = await store.accruePassive(state.key);
+       const r = await store.claimHourlyIncome(state.key);
        setBusy(false);
        if (r.ok) {
          state.user = store.getUser(state.key);
          renderHeader(); renderDeposit();
-         toast('⏱ Накопленное забрано');
-       } else toast(r.error || 'Ошибка', true);
+         toast('⏱ +' + number(r.amount) + ' @ дохода на баланс');
+       } else toast(r.error, true);
      });
    }
 

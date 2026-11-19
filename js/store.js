@@ -11,6 +11,8 @@
   const STARTER_BALANCE = 1000;
   const DAILY_BONUS = 500;
   const DAY_MS = 24 * 60 * 60 * 1000;
+  const HOUR_MS = 60 * 60 * 1000;
+  const DEPOSIT_RATE_PER_HOUR = 0.0003472; // 0.03472% в час
 
   function createEmptyDb() {
     return { version: 3, rev: 0, users: {}, history: [], devices: {} };
@@ -37,6 +39,7 @@
       workEarnHourStart: Number.isFinite(user && user.workEarnHourStart) ? user.workEarnHourStart : 0,
       workEarnedThisHour: Number.isFinite(user && user.workEarnedThisHour) ? user.workEarnedThisHour : 0,
       workLevel: (Number.isFinite(user && user.workLevel) && user.workLevel >= 1 && user.workLevel <= 5) ? Math.floor(user.workLevel) : 1,
+      workLimitLevel: (Number.isFinite(user && user.workLimitLevel) && user.workLimitLevel >= 1 && user.workLimitLevel <= 5) ? Math.floor(user.workLimitLevel) : 1,
       totalEarned: Number.isFinite(user && user.totalEarned) && user.totalEarned >= 0 ? Math.floor(user.totalEarned) : 0,
       totalTaps: Number.isFinite(user && user.totalTaps) && user.totalTaps >= 0 ? Math.floor(user.totalTaps) : 0,
       gamesPlayed: Number.isFinite(user && user.gamesPlayed) && user.gamesPlayed >= 0 ? Math.floor(user.gamesPlayed) : 0,
@@ -57,10 +60,12 @@
       questsClaimed: Array.isArray(user && user.questsClaimed) ? user.questsClaimed.filter(v => typeof v === 'string').slice(0, 20) : [],
        recentRecipients: Array.isArray(user && user.recentRecipients) ? user.recentRecipients.filter(v => typeof v === 'string').slice(0, 3) : [],
        deposit: Number.isFinite(user && user.deposit) && user.deposit >= 0 ? Math.floor(user.deposit) : 0,
+      depositPending: Number.isFinite(user && user.depositPending) && user.depositPending >= 0 ? Math.floor(user.depositPending) : 0,
        depositLastAccrual: Number.isFinite(user && user.depositLastAccrual) ? user.depositLastAccrual : 0,
        hourlyLevel: (Number.isFinite(user && user.hourlyLevel) && user.hourlyLevel >= 0 && user.hourlyLevel <= 5) ? Math.floor(user.hourlyLevel) : 0,
        hourlyRate: Number.isFinite(user && user.hourlyRate) && user.hourlyRate >= 0 ? Math.floor(user.hourlyRate) : 0,
-       hourlyLastAccrual: Number.isFinite(user && user.hourlyLastAccrual) ? user.hourlyLastAccrual : 0
+       hourlyLastAccrual: Number.isFinite(user && user.hourlyLastAccrual) ? user.hourlyLastAccrual : 0,
+      hourlyPending: Number.isFinite(user && user.hourlyPending) && user.hourlyPending >= 0 ? Math.floor(user.hourlyPending) : 0
     };
   }
 
@@ -231,6 +236,10 @@
       dailyEnabled: (typeof user.dailyEnabled === 'boolean') ? user.dailyEnabled : true,
       avatar: typeof user.avatar === 'string' ? user.avatar : '',
       workLevel: user.workLevel || 1,
+      workLimitLevel: user.workLimitLevel || 1,
+      lastWorkEarnAt: user.lastWorkEarnAt || 0,
+      workEarnHourStart: user.workEarnHourStart || 0,
+      workEarnedThisHour: user.workEarnedThisHour || 0,
       totalEarned: user.totalEarned || 0,
       totalTaps: user.totalTaps || 0,
       gamesPlayed: user.gamesPlayed || 0,
@@ -245,9 +254,11 @@
        recentRecipients: Array.isArray(user.recentRecipients) ? user.recentRecipients.slice(0, 3) : [],
        deposit: user.deposit || 0,
        depositLastAccrual: user.depositLastAccrual || 0,
+       depositPending: user.depositPending || 0,
        hourlyLevel: user.hourlyLevel || 0,
        hourlyRate: user.hourlyRate || 0,
-       hourlyLastAccrual: user.hourlyLastAccrual || 0
+       hourlyLastAccrual: user.hourlyLastAccrual || 0,
+       hourlyPending: user.hourlyPending || 0
     };
   }
 
@@ -384,38 +395,44 @@
     });
   }
 
+  // Начисляет проценты в «накопители». На баланс они попадают только вручную,
+  // чтобы сумма в интерфейсе всегда совпадала с тем, что реально можно забрать.
   function accrueUser(user) {
     if (!user) return;
     const now = Date.now();
-    // deposit interest: 0.03472% per hour
-    if (user.deposit > 0) {
-      if (!user.depositLastAccrual) user.depositLastAccrual = now;
-      const hours = (now - user.depositLastAccrual) / 3600000;
-      if (hours > 0) {
-        const interest = Math.floor(user.deposit * 0.0003472 * hours);
-        if (interest > 0) {
-          user.deposit += interest;
-          user.totalEarned = (user.totalEarned || 0) + interest;
+
+    // проценты по депозиту
+    if (!user.depositLastAccrual) user.depositLastAccrual = now;
+    if ((user.deposit || 0) > 0) {
+      const perHour = user.deposit * DEPOSIT_RATE_PER_HOUR;
+      const elapsed = now - user.depositLastAccrual;
+      if (perHour > 0 && elapsed > 0) {
+        const whole = Math.floor(perHour * elapsed / HOUR_MS);
+        if (whole > 0) {
+          user.depositPending = (user.depositPending || 0) + whole;
+          // сдвигаем отметку только на «оплаченное» время — дробный остаток не теряется
+          user.depositLastAccrual += Math.round((whole / perHour) * HOUR_MS);
         }
-        user.depositLastAccrual = now;
       }
     } else {
       user.depositLastAccrual = now;
+      if (!Number.isFinite(user.depositPending)) user.depositPending = 0;
     }
-    // passive hourly income
-    if (user.hourlyRate > 0) {
-      if (!user.hourlyLastAccrual) user.hourlyLastAccrual = now;
-      const hours = (now - user.hourlyLastAccrual) / 3600000;
-      if (hours > 0) {
-        const earned = Math.floor(user.hourlyRate * hours);
-        if (earned > 0) {
-          user.balance += earned;
-          user.totalEarned = (user.totalEarned || 0) + earned;
+
+    // пассивный доход
+    if (!user.hourlyLastAccrual) user.hourlyLastAccrual = now;
+    if ((user.hourlyRate || 0) > 0) {
+      const elapsed = now - user.hourlyLastAccrual;
+      if (elapsed > 0) {
+        const whole = Math.floor(user.hourlyRate * elapsed / HOUR_MS);
+        if (whole > 0) {
+          user.hourlyPending = (user.hourlyPending || 0) + whole;
+          user.hourlyLastAccrual += Math.round((whole / user.hourlyRate) * HOUR_MS);
         }
-        user.hourlyLastAccrual = now;
       }
     } else {
       user.hourlyLastAccrual = now;
+      if (!Number.isFinite(user.hourlyPending)) user.hourlyPending = 0;
     }
   }
 
@@ -425,7 +442,41 @@
       const user = db.users[k];
       if (!user) return { ok: false };
       accrueUser(user);
-      return { ok: true, balance: user.balance, deposit: user.deposit, earned: 0 };
+      return { ok: true, balance: user.balance, deposit: user.deposit, pending: user.depositPending || 0, hourlyPending: user.hourlyPending || 0 };
+    });
+  }
+
+  async function claimDepositInterest(key) {
+    const k = normalizeNick(key);
+    return withLatest(() => {
+      const user = db.users[k];
+      if (!user) return { ok: false, error: 'Профиль не найден.' };
+      accrueUser(user);
+      const amount = Math.floor(user.depositPending || 0);
+      if (amount <= 0) return { ok: false, error: 'Пока нечего забирать: проценты копятся за каждый час.' };
+      user.depositPending -= amount;
+      user.balance += amount;
+      user.totalEarned = (user.totalEarned || 0) + amount;
+      const newAch = checkAchievements(user);
+      addHistory({ type: 'in', userKey: k, peer: 'депозит', amount, memo: 'Проценты по депозиту на баланс' });
+      return { ok: true, amount, balance: user.balance, deposit: user.deposit, pending: user.depositPending, newAchievements: newAch };
+    });
+  }
+
+  async function claimHourlyIncome(key) {
+    const k = normalizeNick(key);
+    return withLatest(() => {
+      const user = db.users[k];
+      if (!user) return { ok: false, error: 'Профиль не найден.' };
+      accrueUser(user);
+      const amount = Math.floor(user.hourlyPending || 0);
+      if (amount <= 0) return { ok: false, error: 'Пока нечего забирать: доход копится за каждый час.' };
+      user.hourlyPending -= amount;
+      user.balance += amount;
+      user.totalEarned = (user.totalEarned || 0) + amount;
+      const newAch = checkAchievements(user);
+      addHistory({ type: 'in', userKey: k, peer: 'пассивный доход', amount, memo: 'Пассивный доход на баланс' });
+      return { ok: true, amount, balance: user.balance, pending: user.hourlyPending, newAchievements: newAch };
     });
   }
 
@@ -626,6 +677,14 @@
   const WORK_REWARDS = [1, 2, 3, 5, 8];
   function workRewardForLevel(lvl) { return WORK_REWARDS[Math.min(Math.max((lvl||1)-1,0),4)] || 1; }
 
+  // Лимит заработка в «Работе» за час: уровень 1..5.
+  const WORK_HOURLY_LIMITS = [60, 120, 240, 500, 1000];
+  const WORK_LIMIT_COSTS = [0, 1000, 3000, 8000, 20000];
+  function workHourlyLimit(user) {
+    const lvl = (user && Number.isFinite(user.workLimitLevel)) ? Math.floor(user.workLimitLevel) : 1;
+    return WORK_HOURLY_LIMITS[Math.min(Math.max(lvl - 1, 0), WORK_HOURLY_LIMITS.length - 1)];
+  }
+
   function ensureQuestsDay(user) {
     if (!user) return;
     const today = Math.floor(Date.now() / DAY_MS) * DAY_MS;
@@ -678,8 +737,9 @@
         user.workEarnHourStart = now;
         user.workEarnedThisHour = 0;
       }
-      if ((user.workEarnedThisHour || 0) + amt > 60) {
-        return { ok: false, error: 'Лимит заработка в час достигнут (60 @). Отдохни.' };
+      const hourLimit = workHourlyLimit(user);
+      if ((user.workEarnedThisHour || 0) + amt > hourLimit) {
+        return { ok: false, error: 'Лимит заработка в час достигнут (' + hourLimit + ' @). Улучши лимит или отдохни.' };
       }
       if (!Number.isFinite(user.balance)) user.balance = 0;
       user.balance += amt;
@@ -692,7 +752,26 @@
       user.questsProgress.earned = (user.questsProgress.earned || 0) + amt;
       addHistory({ type: 'in', userKey: key, peer: 'работа', amount: amt, memo: 'Заработок в «Работе»' });
       const newAch = checkAchievements(user);
-      return { ok: true, amount: amt, balance: user.balance, newAchievements: newAch };
+      return { ok: true, amount: amt, balance: user.balance, limit: hourLimit, newAchievements: newAch };
+    });
+  }
+
+  async function buyWorkLimitUpgrade(userKey) {
+    const key = normalizeNick(userKey);
+    return withLatest(() => {
+      const user = db.users[key];
+      if (!user || key === 'admin') return { ok: false, error: 'Профиль не найден.' };
+      const lvl = user.workLimitLevel || 1;
+      if (lvl >= WORK_LIMIT_COSTS.length) return { ok: false, error: 'Максимальный лимит уже куплен.' };
+      const cost = WORK_LIMIT_COSTS[lvl];
+      if ((user.balance || 0) < cost) return { ok: false, error: 'Недостаточно @.' };
+      user.balance -= cost;
+      user.workLimitLevel = lvl + 1;
+      ensureQuestsDay(user);
+      user.questsProgress.upgrades = (user.questsProgress.upgrades || 0) + 1;
+      const newAch = checkAchievements(user);
+      addHistory({ type: 'out', userKey: key, peer: 'магазин', amount: cost, memo: 'Улучшение лимита работы до ' + workHourlyLimit(user) + ' @/час' });
+      return { ok: true, level: user.workLimitLevel, limit: workHourlyLimit(user), cost, newAchievements: newAch };
     });
   }
 
@@ -884,9 +963,15 @@
     buyWorkUpgrade,
     workRewardForLevel,
     accruePassive,
+    claimDepositInterest,
+    claimHourlyIncome,
     depositMoney,
     withdrawDeposit,
     buyHourlyUpgrade,
+    buyWorkLimitUpgrade,
+    workHourlyLimit,
+    WORK_HOURLY_LIMITS,
+    WORK_LIMIT_COSTS,
     HOURLY_UPGRADE_COSTS,
     HOURLY_UPGRADE_RATES,
     playCoinFlip,
