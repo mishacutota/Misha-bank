@@ -13,7 +13,7 @@
   const DAY_MS = 24 * 60 * 60 * 1000;
 
   function createEmptyDb() {
-    return { version: 3, rev: 0, users: {}, history: [] };
+    return { version: 3, rev: 0, users: {}, history: [], devices: {} };
   }
 
   function normalizeNick(nick) {
@@ -55,7 +55,12 @@
         daily: Number.isFinite(user.questsProgress.daily) ? user.questsProgress.daily : 0
       } : { taps:0, earned:0, games:0, wins:0, upgrades:0, daily:0 },
       questsClaimed: Array.isArray(user && user.questsClaimed) ? user.questsClaimed.filter(v => typeof v === 'string').slice(0, 20) : [],
-      recentRecipients: Array.isArray(user && user.recentRecipients) ? user.recentRecipients.filter(v => typeof v === 'string').slice(0, 3) : []
+       recentRecipients: Array.isArray(user && user.recentRecipients) ? user.recentRecipients.filter(v => typeof v === 'string').slice(0, 3) : [],
+       deposit: Number.isFinite(user && user.deposit) && user.deposit >= 0 ? Math.floor(user.deposit) : 0,
+       depositLastAccrual: Number.isFinite(user && user.depositLastAccrual) ? user.depositLastAccrual : 0,
+       hourlyLevel: (Number.isFinite(user && user.hourlyLevel) && user.hourlyLevel >= 0 && user.hourlyLevel <= 5) ? Math.floor(user.hourlyLevel) : 0,
+       hourlyRate: Number.isFinite(user && user.hourlyRate) && user.hourlyRate >= 0 ? Math.floor(user.hourlyRate) : 0,
+       hourlyLastAccrual: Number.isFinite(user && user.hourlyLastAccrual) ? user.hourlyLastAccrual : 0
     };
   }
 
@@ -91,7 +96,12 @@
             message: typeof item.message === 'string' ? item.message.slice(0, 200) : ''
           };
         })
-      : [];
+       : [];
+    if (raw.devices && typeof raw.devices === 'object') {
+      for (const [dev, nicks] of Object.entries(raw.devices)) {
+        if (Array.isArray(nicks)) db.devices[dev] = nicks.filter(v => typeof v === 'string').slice(0, 10);
+      }
+    }
     return db;
   }
 
@@ -232,7 +242,12 @@
       questsDate: user.questsDate || 0,
       questsProgress: user.questsProgress || { taps:0, earned:0, games:0, wins:0, upgrades:0, daily:0 },
       questsClaimed: Array.isArray(user.questsClaimed) ? user.questsClaimed.slice() : [],
-      recentRecipients: Array.isArray(user.recentRecipients) ? user.recentRecipients.slice(0, 3) : []
+       recentRecipients: Array.isArray(user.recentRecipients) ? user.recentRecipients.slice(0, 3) : [],
+       deposit: user.deposit || 0,
+       depositLastAccrual: user.depositLastAccrual || 0,
+       hourlyLevel: user.hourlyLevel || 0,
+       hourlyRate: user.hourlyRate || 0,
+       hourlyLastAccrual: user.hourlyLastAccrual || 0
     };
   }
 
@@ -256,7 +271,7 @@
     return { ok: true, amount: DAILY_BONUS, issued: DAILY_BONUS, nextAt: user.lastDailyAt + DAY_MS };
   }
 
-  async function register(nick, pin) {
+  async function register(nick, pin, deviceId) {
     const clean = String(nick || '').trim();
     const key = normalizeNick(clean);
     if (!/^[a-zA-Z0-9_]{3,16}$/.test(clean)) {
@@ -264,10 +279,19 @@
     }
     if (!/^\d{4,6}$/.test(String(pin || ''))) return { ok: false, error: 'ПИН-код должен содержать 4–6 цифр.' };
 
+    const dev = (typeof deviceId === 'string') ? deviceId.trim().slice(0, 64) : '';
+
     return withLatest(() => {
       if (db.users[key]) return { ok: false, error: 'Этот ник уже занят. Придумай другой.' };
-      const user = { nick: clean, pin: String(pin), createdAt: Date.now(), balance: STARTER_BALANCE, lastDailyAt: 0, dailyEnabled: true, avatar: '', recentRecipients: [] };
+      if (dev) {
+        if (!db.devices[dev]) db.devices[dev] = [];
+        if (db.devices[dev].length >= 2) {
+          return { ok: false, error: 'С этого устройства можно создать не более 2 аккаунтов.' };
+        }
+      }
+      const user = { nick: clean, pin: String(pin), createdAt: Date.now(), balance: STARTER_BALANCE, lastDailyAt: 0, dailyEnabled: true, avatar: '', recentRecipients: [], deviceId: dev, totalEarned: 0, totalSent: 0, totalTaps: 0, gamesPlayed: 0, gamesWon: 0, totalGambled: 0, biggestWin: 0, dailyCount: 0, workLevel: 1, lastWorkEarnAt: 0, workEarnHourStart: 0, workEarnedThisHour: 0, achievements: [], questsDay: 0, questsProgress: {}, questsClaimed: [] };
       db.users[key] = user;
+      if (dev) db.devices[dev].push(key);
       addHistory({ type: 'mint', userKey: key, peer: '', amount: STARTER_BALANCE, memo: 'Стартовый баланс' });
       const daily = issueDaily(key);
       if (!daily.ok) return { ok: false, error: daily.error };
@@ -360,6 +384,109 @@
     });
   }
 
+  function accrueUser(user) {
+    if (!user) return;
+    const now = Date.now();
+    // deposit interest: 0.03472% per hour
+    if (user.deposit > 0) {
+      if (!user.depositLastAccrual) user.depositLastAccrual = now;
+      const hours = (now - user.depositLastAccrual) / 3600000;
+      if (hours > 0) {
+        const interest = Math.floor(user.deposit * 0.0003472 * hours);
+        if (interest > 0) {
+          user.deposit += interest;
+          user.totalEarned = (user.totalEarned || 0) + interest;
+        }
+        user.depositLastAccrual = now;
+      }
+    } else {
+      user.depositLastAccrual = now;
+    }
+    // passive hourly income
+    if (user.hourlyRate > 0) {
+      if (!user.hourlyLastAccrual) user.hourlyLastAccrual = now;
+      const hours = (now - user.hourlyLastAccrual) / 3600000;
+      if (hours > 0) {
+        const earned = Math.floor(user.hourlyRate * hours);
+        if (earned > 0) {
+          user.balance += earned;
+          user.totalEarned = (user.totalEarned || 0) + earned;
+        }
+        user.hourlyLastAccrual = now;
+      }
+    } else {
+      user.hourlyLastAccrual = now;
+    }
+  }
+
+  async function accruePassive(key) {
+    const k = normalizeNick(key);
+    return withLatest(() => {
+      const user = db.users[k];
+      if (!user) return { ok: false };
+      accrueUser(user);
+      return { ok: true, balance: user.balance, deposit: user.deposit, earned: 0 };
+    });
+  }
+
+  async function depositMoney(key, amount) {
+    const amt = Number(amount);
+    if (!Number.isInteger(amt) || amt <= 0) return { ok: false, error: 'Укажи положительную сумму.' };
+    const k = normalizeNick(key);
+    return withLatest(() => {
+      const user = db.users[k];
+      if (!user) return { ok: false, error: 'Профиль не найден.' };
+      accrueUser(user);
+      if (user.balance < amt) return { ok: false, error: 'Недостаточно @ на балансе.' };
+      user.balance -= amt;
+      user.deposit = (user.deposit || 0) + amt;
+      if (!user.depositLastAccrual) user.depositLastAccrual = Date.now();
+      addHistory({ type: 'out', userKey: k, peer: 'депозит', amount: amt, memo: 'Пополнение депозита' });
+      return { ok: true, amount: amt, balance: user.balance, deposit: user.deposit };
+    });
+  }
+
+  async function withdrawDeposit(key, amount) {
+    const amt = Number(amount);
+    if (!Number.isInteger(amt) || amt <= 0) return { ok: false, error: 'Укажи положительную сумму.' };
+    const k = normalizeNick(key);
+    return withLatest(() => {
+      const user = db.users[k];
+      if (!user) return { ok: false, error: 'Профиль не найден.' };
+      accrueUser(user);
+      if ((user.deposit || 0) < amt) return { ok: false, error: 'Недостаточно на депозите.' };
+      user.deposit -= amt;
+      user.balance += amt;
+      addHistory({ type: 'in', userKey: k, peer: 'депозит', amount: amt, memo: 'Снятие с депозита' });
+      return { ok: true, amount: amt, balance: user.balance, deposit: user.deposit };
+    });
+  }
+
+  const HOURLY_UPGRADE_COSTS = [0, 800, 2500, 7000, 18000, 45000];
+  const HOURLY_UPGRADE_RATES = [0, 5, 15, 40, 100, 260];
+
+  async function buyHourlyUpgrade(key) {
+    const k = normalizeNick(key);
+    return withLatest(() => {
+      const user = db.users[k];
+      if (!user) return { ok: false, error: 'Профиль не найден.' };
+      accrueUser(user);
+      const lvl = user.hourlyLevel || 0;
+      if (lvl >= 5) return { ok: false, error: 'Максимальный уровень.' };
+      const cost = HOURLY_UPGRADE_COSTS[lvl + 1];
+      if (user.balance < cost) return { ok: false, error: 'Недостаточно @.' };
+      user.balance -= cost;
+      user.hourlyLevel = lvl + 1;
+      user.hourlyRate = HOURLY_UPGRADE_RATES[user.hourlyLevel];
+      if (!user.hourlyLastAccrual) user.hourlyLastAccrual = Date.now();
+      user.questsProgress = user.questsProgress || { taps:0, earned:0, games:0, wins:0, upgrades:0, daily:0 };
+      user.questsProgress.upgrades = (user.questsProgress.upgrades || 0) + 1;
+      checkAchievements(user);
+      addHistory({ type: 'out', userKey: k, peer: 'улучшение', amount: cost, memo: 'Покупка пассивного дохода ' + user.hourlyLevel + ' ур.' });
+      return { ok: true, level: user.hourlyLevel, rate: user.hourlyRate, balance: user.balance, cost };
+    });
+  }
+
   async function purgeTestAccounts() {
     return withLatest(() => {
       const removed = [];
@@ -399,6 +526,11 @@
     return withLatest(() => {
       if (!db.users[key]) return { ok: false, error: 'Пользователь не найден.' };
       delete db.users[key];
+      if (db.devices) {
+        for (const dev of Object.keys(db.devices)) {
+          db.devices[dev] = (db.devices[dev] || []).filter(n => n !== key);
+        }
+      }
       return { ok: true };
     });
   }
@@ -751,6 +883,12 @@
     workEarn,
     buyWorkUpgrade,
     workRewardForLevel,
+    accruePassive,
+    depositMoney,
+    withdrawDeposit,
+    buyHourlyUpgrade,
+    HOURLY_UPGRADE_COSTS,
+    HOURLY_UPGRADE_RATES,
     playCoinFlip,
     playDice,
     getQuests,

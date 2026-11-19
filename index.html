@@ -90,6 +90,7 @@
         <button class="tab active" data-tab="wallet" type="button">Счёт</button>
         <button class="tab" data-tab="send" type="button">Перевести</button>
         <button class="tab hidden" data-tab="work" type="button" id="tab-work">Работа</button>
+        <button class="tab" data-tab="deposit" type="button">Депозит</button>
         <button class="tab" data-tab="games" type="button">Игры</button>
         <button class="tab" data-tab="bank" type="button">Топ</button>
         <button class="tab hidden" data-tab="admin" type="button" id="tab-admin">Админ</button>
@@ -183,7 +184,35 @@
       </section>
 
        <!-- ---------- ИГРЫ ---------- -->
-      <section class="panel hidden" data-panel="games">
+       <section class="panel hidden" data-panel="deposit">
+         <h3 class="section-title">Депозит и пассивный доход</h3>
+         <p class="muted small">Положи @ в банк — они копят проценты, но недоступны для трат. Снимай когда хочешь. Также можно купить пассивный доход в час.</p>
+
+         <div class="game-card">
+           <h4>🏦 Депозит</h4>
+           <p class="muted small">На депозите: <strong id="deposit-amount">0</strong> @ · процент <strong>0.03472%</strong> в час</p>
+           <div class="field">
+             <label for="deposit-input">Сумма</label>
+             <input id="deposit-input" type="number" min="1" step="1" placeholder="сколько положить" />
+           </div>
+           <div class="btn-row">
+             <button id="btn-deposit" class="btn primary small" type="button">Положить</button>
+             <button id="btn-withdraw" class="btn ghost small" type="button">Снять</button>
+             <button id="btn-accrue" class="btn ghost small" type="button">Начислить проценты</button>
+           </div>
+         </div>
+
+         <div class="game-card">
+           <h4>⏱ Пассивный доход</h4>
+           <p class="muted small">Уровень: <strong id="hourly-level">0</strong> · доход: <strong id="hourly-rate">0</strong> @/час</p>
+           <p class="muted small">Следующий уровень стоит <strong id="hourly-cost">800</strong> @</p>
+           <button id="btn-hourly-upgrade" class="btn primary small" type="button">Купить улучшение</button>
+           <button id="btn-claim-hourly" class="btn ghost small" type="button">Забрать накопленное</button>
+           <p class="muted small">Накоплено: <strong id="hourly-accrued">0</strong> @</p>
+         </div>
+       </section>
+
+       <section class="panel hidden" data-panel="games">
         <h3 class="section-title">Игры и достижения</h3>
         <p class="muted small">Зарабатывай @ в одиночку: играй, выполняй квесты, получай достижения.</p>
 

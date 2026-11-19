@@ -48,7 +48,13 @@
     const nick = el('auth-nick').value.trim();
     const pin = el('auth-pin').value.trim();
     setBusy(true);
-    const result = state.mode === 'login' ? await store.login(nick, pin) : await store.register(nick, pin);
+    let deviceId = '';
+  try { deviceId = localStorage.getItem('misha-bank-device') || ''; } catch (_) { /* ignore */ }
+  if (!deviceId) {
+    deviceId = 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try { localStorage.setItem('misha-bank-device', deviceId); } catch (_) { /* ignore */ }
+  }
+  const result = state.mode === 'login' ? await store.login(nick, pin) : await store.register(nick, pin, deviceId);
     setBusy(false);
     if (!result.ok) {
       el('auth-error').textContent = result.error;
@@ -106,7 +112,7 @@
     renderAll();
     switchTab('wallet');
     clearInterval(dailyTimer);
-    dailyTimer = setInterval(() => { renderDaily(); tryAutoDaily(); }, 15000);
+    dailyTimer = setInterval(() => { renderDaily(); tryAutoDaily(); (async () => { if (state.key) { await store.accruePassive(state.key); state.user = store.getUser(state.key); renderHeader(); renderDeposit(); } })(); }, 15000);
     clearInterval(syncTimer);
     syncTimer = setInterval(() => { if (document.visibilityState === 'visible') syncFromServer(false); }, 30000);
     document.removeEventListener('visibilitychange', handleVisibility);
@@ -191,6 +197,7 @@
     if (tab === 'admin') renderAdmin();
     if (tab === 'work') renderWork();
     if (tab === 'games') renderGames();
+    if (tab === 'deposit') renderDeposit();
   }
 
   function renderHeader() {
@@ -389,6 +396,30 @@
     setStat('stat-wins', u.gamesWon);
     setStat('stat-gambled', u.totalGambled);
     setStat('stat-best', u.biggestWin);
+  }
+
+  function renderDeposit() {
+    if (!state.user) return;
+    const u = state.user;
+    const depEl = el('deposit-amount');
+    if (depEl) depEl.textContent = number(u.deposit || 0);
+    const lvlEl = el('hourly-level');
+    if (lvlEl) lvlEl.textContent = u.hourlyLevel || 0;
+    const rateEl = el('hourly-rate');
+    if (rateEl) rateEl.textContent = number(u.hourlyRate || 0);
+    const costs = store.HOURLY_UPGRADE_COSTS || [0,800,2500,7000,18000,45000];
+    const lvl = u.hourlyLevel || 0;
+    const costEl = el('hourly-cost');
+    if (costEl) costEl.textContent = (lvl >= 5) ? 'макс' : number(costs[lvl + 1] || 0);
+    const btnUp = el('btn-hourly-upgrade');
+    if (btnUp) btnUp.disabled = state.busy || lvl >= 5 || (u.balance || 0) < (lvl < 5 ? (costs[lvl+1]||0) : 0);
+    // accrued estimate
+    const now = Date.now();
+    const last = u.hourlyLastAccrual || now;
+    const hours = (now - last) / 3600000;
+    const accrued = Math.floor((u.hourlyRate || 0) * hours);
+    const accEl = el('hourly-accrued');
+    if (accEl) accEl.textContent = number(accrued);
   }
 
   function updateSendTotals() {
@@ -599,6 +630,7 @@
     renderSend();
     renderWork();
     renderGames();
+    renderDeposit();
     renderBank();
     if (state.isAdmin && document.querySelector('[data-panel="admin"]:not(.hidden)')) renderAdmin();
     updateAdminVisibility();
@@ -864,9 +896,70 @@
         }
       });
     });
-  }
+   }
 
-  function bind() {
+   function bindDeposit() {
+     const depInput = el('deposit-input');
+     const btnDep = el('btn-deposit');
+     if (btnDep) btnDep.addEventListener('click', async () => {
+       const amt = Number(depInput ? depInput.value : 0);
+       setBusy(true);
+       const r = await store.depositMoney(state.key, amt);
+       setBusy(false);
+       if (r.ok) {
+         state.user = store.getUser(state.key);
+         renderHeader(); renderDeposit(); renderAll();
+         toast('🏦 Положено ' + number(r.amount) + ' @ на депозит');
+       } else toast(r.error, true);
+     });
+     const btnWd = el('btn-withdraw');
+     if (btnWd) btnWd.addEventListener('click', async () => {
+       const amt = Number(depInput ? depInput.value : 0);
+       setBusy(true);
+       const r = await store.withdrawDeposit(state.key, amt);
+       setBusy(false);
+       if (r.ok) {
+         state.user = store.getUser(state.key);
+         renderHeader(); renderDeposit(); renderAll();
+         toast('💸 Снято ' + number(r.amount) + ' @ с депозита');
+       } else toast(r.error, true);
+     });
+     const btnAcc = el('btn-accrue');
+     if (btnAcc) btnAcc.addEventListener('click', async () => {
+       setBusy(true);
+       const r = await store.accruePassive(state.key);
+       setBusy(false);
+       if (r.ok) {
+         state.user = store.getUser(state.key);
+         renderHeader(); renderDeposit();
+         toast('📈 Проценты начислены');
+       } else toast(r.error || 'Ошибка', true);
+     });
+     const btnHr = el('btn-hourly-upgrade');
+     if (btnHr) btnHr.addEventListener('click', async () => {
+       setBusy(true);
+       const r = await store.buyHourlyUpgrade(state.key);
+       setBusy(false);
+       if (r.ok) {
+         state.user = store.getUser(state.key);
+         renderHeader(); renderDeposit(); renderGames();
+         toast('⏱ Пассивный доход: ' + number(r.rate) + ' @/час');
+       } else toast(r.error, true);
+     });
+     const btnClaimHr = el('btn-claim-hourly');
+     if (btnClaimHr) btnClaimHr.addEventListener('click', async () => {
+       setBusy(true);
+       const r = await store.accruePassive(state.key);
+       setBusy(false);
+       if (r.ok) {
+         state.user = store.getUser(state.key);
+         renderHeader(); renderDeposit();
+         toast('⏱ Накопленное забрано');
+       } else toast(r.error || 'Ошибка', true);
+     });
+   }
+
+   function bind() {
     document.querySelectorAll('.switch-btn').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     el('auth-form').addEventListener('submit', handleAuth);
     el('btn-logout').addEventListener('click', logout);
@@ -946,6 +1039,7 @@
     bindSettings();
     bindWork();
     bindGames();
+    bindDeposit();
 
     const msgInput = el('send-message');
     if (msgInput) {
