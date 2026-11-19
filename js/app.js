@@ -190,6 +190,7 @@
     document.querySelectorAll('[data-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.panel !== tab));
     if (tab === 'admin') renderAdmin();
     if (tab === 'work') renderWork();
+    if (tab === 'games') renderGames();
   }
 
   function renderHeader() {
@@ -313,6 +314,81 @@
     if (bar) bar.style.width = (remainder / 10 * 100) + '%';
     const earnedEl = el('work-earned');
     if (earnedEl) earnedEl.textContent = `${number(state.sessionEarned || 0)} @`;
+  }
+
+  function achTitle(id) {
+    const a = (store.ACHIEVEMENTS || []).find(x => x.id === id);
+    return a ? a.title : id;
+  }
+
+  function renderGames() {
+    if (!state.user) return;
+    const u = state.user;
+    const lvl = u.workLevel || 1;
+    const lvlEl = el('work-level'); if (lvlEl) lvlEl.textContent = lvl;
+    const rewEl = el('work-reward'); if (rewEl) rewEl.textContent = store.workRewardForLevel(lvl);
+    const costs = [0,500,1500,4000,10000];
+    const costEl = el('upgrade-cost');
+    if (costEl) costEl.textContent = (lvl >= 5) ? 'макс' : number(costs[lvl]);
+    const btnUp = el('btn-upgrade');
+    if (btnUp) btnUp.disabled = state.busy || lvl >= 5 || (u.balance || 0) < (lvl < 5 ? costs[lvl] : 0);
+
+    // quests
+    const qres = store.getQuests(state.key);
+    const qlist = el('quests-list');
+    if (qlist && qres && qres.ok) {
+      qlist.innerHTML = qres.quests.map(q => {
+        const pct = Math.min(100, Math.round((q.progress / q.target) * 100));
+        const done = q.progress >= q.target;
+        return `<li class="quest-item ${q.claimed ? 'claimed' : (done ? 'done' : '')}">
+          <div class="quest-main">
+            <strong>${escapeHtml(q.title)}</strong>
+            <small>${q.progress} / ${q.target}</small>
+            <div class="quest-bar"><div class="quest-bar-fill" style="width:${pct}%"></div></div>
+          </div>
+          <div class="quest-side">
+            <span class="quest-reward">+${number(q.reward)} @</span>
+            ${q.claimed ? '<span class="muted small">получено</span>' : (done ? `<button class="btn primary small quest-claim" data-qid="${escapeHtml(q.id)}" type="button">Забрать</button>` : '')}
+          </div>
+        </li>`;
+      }).join('') || '<li class="empty">Квесты обновятся завтра</li>';
+      qlist.querySelectorAll('.quest-claim').forEach(b => {
+        b.addEventListener('click', async () => {
+          setBusy(true);
+          const r = await store.claimQuest(state.key, b.dataset.qid);
+          setBusy(false);
+          if (r.ok) {
+            state.user = store.getUser(state.key);
+            renderHeader(); renderGames(); renderAll();
+            toast('📜 +' + r.reward + ' @ за квест!');
+            if (r.newAchievements && r.newAchievements.length) for (const a of r.newAchievements) toast('🏆 Достижение: ' + achTitle(a));
+          } else toast(r.error, true);
+        });
+      });
+    }
+
+    // achievements
+    const alist = el('achievements-list');
+    if (alist) {
+      const unlocked = new Set(u.achievements || []);
+      const all = store.ACHIEVEMENTS || [];
+      alist.innerHTML = all.map(a => {
+        const on = unlocked.has(a.id);
+        return `<div class="ach ${on ? 'unlocked' : 'locked'}" title="${escapeHtml(a.desc)}">
+          <span class="ach-icon">${on ? '🏆' : '🔒'}</span>
+          <span class="ach-title">${escapeHtml(a.title)}</span>
+        </div>`;
+      }).join('');
+    }
+
+    // stats
+    const setStat = (id, val) => { const e = el(id); if (e) e.textContent = number(val || 0); };
+    setStat('stat-earned', u.totalEarned);
+    setStat('stat-taps', u.totalTaps);
+    setStat('stat-games', u.gamesPlayed);
+    setStat('stat-wins', u.gamesWon);
+    setStat('stat-gambled', u.totalGambled);
+    setStat('stat-best', u.biggestWin);
   }
 
   function updateSendTotals() {
@@ -522,6 +598,7 @@
     renderWallet();
     renderSend();
     renderWork();
+    renderGames();
     renderBank();
     if (state.isAdmin && document.querySelector('[data-panel="admin"]:not(.hidden)')) renderAdmin();
     updateAdminVisibility();
@@ -706,26 +783,24 @@
     if (bar) bar.style.width = ((state.workTaps % 10) / 10 * 100) + '%';
 
     if (state.workTaps % 10 === 0) {
+      const reward = store.workRewardForLevel(state.user && state.user.workLevel);
       setBusy(true);
-      const result = await store.workEarn(state.key, 1);
+      const result = await store.workEarn(state.key, reward, 10);
       setBusy(false);
       if (result.ok) {
         state.user = store.getUser(state.key);
-        state.sessionEarned = (state.sessionEarned || 0) + 1;
+        state.sessionEarned = (state.sessionEarned || 0) + reward;
         const earnedEl = el('work-earned');
         if (earnedEl) earnedEl.textContent = `${number(state.sessionEarned)} @`;
         renderHeader();
-        toast('⛏️ +1 @ заработано!');
-        setWorkStatus('Отлично! +1 @ начислено.', false);
+        toast('⛏️ +' + reward + ' @ заработано!');
+        setWorkStatus('Отлично! +' + reward + ' @ начислено.', false);
+        if (result.newAchievements && result.newAchievements.length) {
+          for (const a of result.newAchievements) toast('🏆 Достижение: ' + achTitle(a));
+        }
       } else {
-        toast(result.error || 'Не удалось начислить', true);
-        setWorkStatus(result.error || 'Не удалось начислить', true);
-        // откатываем счётчик тапов, чтобы не было рассинхрона
-        state.workTaps = Math.max(0, state.workTaps - 10);
-        const r2 = state.workTaps % 10;
-        const t2 = r2 === 0 ? 10 : 10 - r2;
-        if (progEl) progEl.textContent = t2;
-        if (bar) bar.style.width = (r2 / 10 * 100) + '%';
+        toast(result.error, true);
+        setWorkStatus(result.error, true);
       }
     }
   }
@@ -733,6 +808,62 @@
   function bindWork() {
     const btn = el('work-tap');
     if (btn) btn.addEventListener('click', handleWorkTap);
+  }
+
+  function bindGames() {
+    const btnUp = el('btn-upgrade');
+    if (btnUp) btnUp.addEventListener('click', async () => {
+      setBusy(true);
+      const r = await store.buyWorkUpgrade(state.key);
+      setBusy(false);
+      if (r.ok) {
+        state.user = store.getUser(state.key);
+        renderHeader(); renderGames(); renderWork();
+        toast('🛠 Уровень работы: ' + r.level);
+        if (r.newAchievements && r.newAchievements.length) for (const a of r.newAchievements) toast('🏆 Достижение: ' + achTitle(a));
+      } else toast(r.error, true);
+    });
+
+    const playCoin = async (choice) => {
+      const amt = Number(el('coin-amount').value);
+      setBusy(true);
+      const r = await store.playCoinFlip(state.key, amt, choice);
+      setBusy(false);
+      const resEl = el('coin-result');
+      if (r.ok) {
+        state.user = store.getUser(state.key);
+        renderHeader(); renderGames();
+        if (resEl) resEl.textContent = (r.win ? '✅ Выпал ' + (r.result === 'heads' ? 'орёл' : 'решка') + ' — выигрыш ' + number(r.payout) + ' @' : '❌ Выпал ' + (r.result === 'heads' ? 'орёл' : 'решка') + ' — проигрыш');
+        if (r.newAchievements && r.newAchievements.length) for (const a of r.newAchievements) toast('🏆 Достижение: ' + achTitle(a));
+      } else {
+        if (resEl) resEl.textContent = r.error;
+        toast(r.error, true);
+      }
+    };
+    const btnHeads = el('btn-coin-heads');
+    if (btnHeads) btnHeads.addEventListener('click', () => playCoin('heads'));
+    const btnTails = el('btn-coin-tails');
+    if (btnTails) btnTails.addEventListener('click', () => playCoin('tails'));
+
+    document.querySelectorAll('.dice-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const amt = Number(el('dice-amount').value);
+        const guess = Number(btn.dataset.guess);
+        setBusy(true);
+        const r = await store.playDice(state.key, amt, guess);
+        setBusy(false);
+        const resEl = el('dice-result');
+        if (r.ok) {
+          state.user = store.getUser(state.key);
+          renderHeader(); renderGames();
+          if (resEl) resEl.textContent = (r.win ? '✅ Выпало ' + r.roll + ' — выигрыш ' + number(r.payout) + ' @' : '❌ Выпало ' + r.roll + ' — проигрыш');
+          if (r.newAchievements && r.newAchievements.length) for (const a of r.newAchievements) toast('🏆 Достижение: ' + achTitle(a));
+        } else {
+          if (resEl) resEl.textContent = r.error;
+          toast(r.error, true);
+        }
+      });
+    });
   }
 
   function bind() {
@@ -814,6 +945,7 @@
 
     bindSettings();
     bindWork();
+    bindGames();
 
     const msgInput = el('send-message');
     if (msgInput) {

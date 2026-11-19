@@ -90,6 +90,7 @@
         <button class="tab active" data-tab="wallet" type="button">Счёт</button>
         <button class="tab" data-tab="send" type="button">Перевести</button>
         <button class="tab hidden" data-tab="work" type="button" id="tab-work">Работа</button>
+        <button class="tab" data-tab="games" type="button">Игры</button>
         <button class="tab" data-tab="bank" type="button">Топ</button>
         <button class="tab hidden" data-tab="admin" type="button" id="tab-admin">Админ</button>
       </nav>
@@ -181,7 +182,82 @@
         </div>
       </section>
 
-      <!-- ---------- ТОП ---------- -->
+       <!-- ---------- ИГРЫ ---------- -->
+      <section class="panel hidden" data-panel="games">
+        <h3 class="section-title">Игры и достижения</h3>
+        <p class="muted small">Зарабатывай @ в одиночку: играй, выполняй квесты, получай достижения.</p>
+
+        <div class="games-grid">
+          <!-- Работа улучшения -->
+          <div class="game-card">
+            <h4>🛠 Улучшения работы</h4>
+            <p class="muted small">Уровень: <strong id="work-level">1</strong> · награда за 10 тапов: <strong id="work-reward">1</strong> @</p>
+            <p class="muted small">Следующий уровень стоит <strong id="upgrade-cost">500</strong> @</p>
+            <button id="btn-upgrade" class="btn primary small" type="button">Улучшить</button>
+          </div>
+
+          <!-- Монетка -->
+          <div class="game-card">
+            <h4>🪙 Подброс монеты</h4>
+            <p class="muted small">Ставка ×1.9 при победе.</p>
+            <label class="field small-field">
+              <span>Ставка @</span>
+              <input id="coin-amount" type="number" min="1" step="1" value="10" />
+            </label>
+            <div class="game-actions">
+              <button id="btn-coin-heads" class="btn ghost small" type="button">Орёл</button>
+              <button id="btn-coin-tails" class="btn ghost small" type="button">Решка</button>
+            </div>
+            <p id="coin-result" class="note"></p>
+          </div>
+
+          <!-- Кубик -->
+          <div class="game-card">
+            <h4>🎲 Кубик</h4>
+            <p class="muted small">Угадай число 1–6 · выигрыш ×5.</p>
+            <label class="field small-field">
+              <span>Ставка @</span>
+              <input id="dice-amount" type="number" min="1" step="1" value="10" />
+            </label>
+            <div class="dice-guess">
+              <button class="dice-btn" data-guess="1" type="button">1</button>
+              <button class="dice-btn" data-guess="2" type="button">2</button>
+              <button class="dice-btn" data-guess="3" type="button">3</button>
+              <button class="dice-btn" data-guess="4" type="button">4</button>
+              <button class="dice-btn" data-guess="5" type="button">5</button>
+              <button class="dice-btn" data-guess="6" type="button">6</button>
+            </div>
+            <p id="dice-result" class="note"></p>
+          </div>
+        </div>
+
+        <!-- Квесты -->
+        <div class="quests-block">
+          <h4>📜 Ежедневные квесты</h4>
+          <ul id="quests-list" class="quests-list"></ul>
+        </div>
+
+        <!-- Достижения -->
+        <div class="achievements-block">
+          <h4>🏆 Достижения</h4>
+          <div id="achievements-list" class="achievements-list"></div>
+        </div>
+
+        <!-- Статистика -->
+        <div class="stats-block">
+          <h4>📊 Статистика</h4>
+          <div class="stats-grid">
+            <div class="stat"><span class="muted small">Заработано всего</span><strong id="stat-earned">0</strong></div>
+            <div class="stat"><span class="muted small">Тапов</span><strong id="stat-taps">0</strong></div>
+            <div class="stat"><span class="muted small">Игр сыграно</span><strong id="stat-games">0</strong></div>
+            <div class="stat"><span class="muted small">Побед</span><strong id="stat-wins">0</strong></div>
+            <div class="stat"><span class="muted small">Поставлено @</span><strong id="stat-gambled">0</strong></div>
+            <div class="stat"><span class="muted small">Лучший выигрыш</span><strong id="stat-best">0</strong></div>
+          </div>
+        </div>
+      </section>
+
+       <!-- ---------- ТОП ---------- -->
       <section class="panel hidden" data-panel="bank">
         <h3 class="section-title">Топ по богатству</h3>
         <p class="muted small">Список игроков, отсортированный по количеству @ на счёте.</p>

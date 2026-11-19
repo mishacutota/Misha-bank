@@ -36,6 +36,25 @@
       lastWorkEarnAt: Number.isFinite(user && user.lastWorkEarnAt) ? user.lastWorkEarnAt : 0,
       workEarnHourStart: Number.isFinite(user && user.workEarnHourStart) ? user.workEarnHourStart : 0,
       workEarnedThisHour: Number.isFinite(user && user.workEarnedThisHour) ? user.workEarnedThisHour : 0,
+      workLevel: (Number.isFinite(user && user.workLevel) && user.workLevel >= 1 && user.workLevel <= 5) ? Math.floor(user.workLevel) : 1,
+      totalEarned: Number.isFinite(user && user.totalEarned) && user.totalEarned >= 0 ? Math.floor(user.totalEarned) : 0,
+      totalTaps: Number.isFinite(user && user.totalTaps) && user.totalTaps >= 0 ? Math.floor(user.totalTaps) : 0,
+      gamesPlayed: Number.isFinite(user && user.gamesPlayed) && user.gamesPlayed >= 0 ? Math.floor(user.gamesPlayed) : 0,
+      gamesWon: Number.isFinite(user && user.gamesWon) && user.gamesWon >= 0 ? Math.floor(user.gamesWon) : 0,
+      totalGambled: Number.isFinite(user && user.totalGambled) && user.totalGambled >= 0 ? Math.floor(user.totalGambled) : 0,
+      biggestWin: Number.isFinite(user && user.biggestWin) && user.biggestWin >= 0 ? Math.floor(user.biggestWin) : 0,
+      dailyCount: Number.isFinite(user && user.dailyCount) && user.dailyCount >= 0 ? Math.floor(user.dailyCount) : 0,
+      achievements: Array.isArray(user && user.achievements) ? user.achievements.filter(v => typeof v === 'string').slice(0, 100) : [],
+      questsDate: Number.isFinite(user && user.questsDate) ? user.questsDate : 0,
+      questsProgress: (user && user.questsProgress && typeof user.questsProgress === 'object') ? {
+        taps: Number.isFinite(user.questsProgress.taps) ? user.questsProgress.taps : 0,
+        earned: Number.isFinite(user.questsProgress.earned) ? user.questsProgress.earned : 0,
+        games: Number.isFinite(user.questsProgress.games) ? user.questsProgress.games : 0,
+        wins: Number.isFinite(user.questsProgress.wins) ? user.questsProgress.wins : 0,
+        upgrades: Number.isFinite(user.questsProgress.upgrades) ? user.questsProgress.upgrades : 0,
+        daily: Number.isFinite(user.questsProgress.daily) ? user.questsProgress.daily : 0
+      } : { taps:0, earned:0, games:0, wins:0, upgrades:0, daily:0 },
+      questsClaimed: Array.isArray(user && user.questsClaimed) ? user.questsClaimed.filter(v => typeof v === 'string').slice(0, 20) : [],
       recentRecipients: Array.isArray(user && user.recentRecipients) ? user.recentRecipients.filter(v => typeof v === 'string').slice(0, 3) : []
     };
   }
@@ -201,6 +220,18 @@
       lastDailyAt: user.lastDailyAt || 0,
       dailyEnabled: (typeof user.dailyEnabled === 'boolean') ? user.dailyEnabled : true,
       avatar: typeof user.avatar === 'string' ? user.avatar : '',
+      workLevel: user.workLevel || 1,
+      totalEarned: user.totalEarned || 0,
+      totalTaps: user.totalTaps || 0,
+      gamesPlayed: user.gamesPlayed || 0,
+      gamesWon: user.gamesWon || 0,
+      totalGambled: user.totalGambled || 0,
+      biggestWin: user.biggestWin || 0,
+      dailyCount: user.dailyCount || 0,
+      achievements: Array.isArray(user.achievements) ? user.achievements.slice() : [],
+      questsDate: user.questsDate || 0,
+      questsProgress: user.questsProgress || { taps:0, earned:0, games:0, wins:0, upgrades:0, daily:0 },
+      questsClaimed: Array.isArray(user.questsClaimed) ? user.questsClaimed.slice() : [],
       recentRecipients: Array.isArray(user.recentRecipients) ? user.recentRecipients.slice(0, 3) : []
     };
   }
@@ -215,7 +246,12 @@
       return { ok: true, amount: 0, issued: 0, nextAt: user.lastDailyAt + DAY_MS };
     }
     user.balance += DAILY_BONUS;
+    user.totalEarned = (user.totalEarned || 0) + DAILY_BONUS;
+    user.dailyCount = (user.dailyCount || 0) + 1;
     user.lastDailyAt = Date.now();
+    ensureQuestsDay(user);
+    user.questsProgress.daily = (user.questsProgress.daily || 0) + 1;
+    checkAchievements(user);
     addHistory({ type: 'daily', userKey, peer: '', amount: DAILY_BONUS, memo: 'Ежедневный бонус' });
     return { ok: true, amount: DAILY_BONUS, issued: DAILY_BONUS, nextAt: user.lastDailyAt + DAY_MS };
   }
@@ -454,9 +490,50 @@
     });
   }
 
-  async function workEarn(userKey, amount) {
+  const WORK_UPGRADE_COSTS = [0, 500, 1500, 4000, 10000];
+  const WORK_REWARDS = [1, 2, 3, 5, 8];
+  function workRewardForLevel(lvl) { return WORK_REWARDS[Math.min(Math.max((lvl||1)-1,0),4)] || 1; }
+
+  function ensureQuestsDay(user) {
+    if (!user) return;
+    const today = Math.floor(Date.now() / DAY_MS) * DAY_MS;
+    if (user.questsDate !== today) {
+      user.questsDate = today;
+      user.questsProgress = { taps:0, earned:0, games:0, wins:0, upgrades:0, daily:0 };
+      user.questsClaimed = [];
+    }
+    if (!user.questsProgress) user.questsProgress = { taps:0, earned:0, games:0, wins:0, upgrades:0, daily:0 };
+  }
+
+  const ACHIEVEMENTS = [
+    { id:'first_earn', title:'Первые @', desc:'Заработать первые @', check: u => (u.totalEarned||0) >= 1 },
+    { id:'tap_100', title:'Трудяга', desc:'Сделать 100 тапов', check: u => (u.totalTaps||0) >= 100 },
+    { id:'tap_1000', title:'Машина', desc:'Сделать 1000 тапов', check: u => (u.totalTaps||0) >= 1000 },
+    { id:'earn_1000', title:'Тысячник', desc:'Заработать 1000 @', check: u => (u.totalEarned||0) >= 1000 },
+    { id:'earn_10000', title:'Миллионер', desc:'Заработать 10000 @', check: u => (u.totalEarned||0) >= 10000 },
+    { id:'gambler', title:'Игрок', desc:'Сыграть 10 игр', check: u => (u.gamesPlayed||0) >= 10 },
+    { id:'lucky', title:'Везунчик', desc:'Выиграть 5 игр', check: u => (u.gamesWon||0) >= 5 },
+    { id:'rich', title:'Богач', desc:'Баланс 5000 @', check: u => (u.balance||0) >= 5000 },
+    { id:'max_upgrade', title:'Мастер работы', desc:'Максимальный уровень работы', check: u => (u.workLevel||1) >= 5 },
+    { id:'daily_7', title:'Постоянный', desc:'Получить бонус 7 дней', check: u => (u.dailyCount||0) >= 7 },
+    { id:'gambler_big', title:'Хайроллер', desc:'Сыграть 50 игр', check: u => (u.gamesPlayed||0) >= 50 },
+    { id:'jackpot', title:'Джекпот', desc:'Выиграть 1000 @ за раз', check: u => (u.biggestWin||0) >= 1000 }
+  ];
+
+  function checkAchievements(user) {
+    if (!user.achievements) user.achievements = [];
+    const newly = [];
+    for (const a of ACHIEVEMENTS) {
+      if (user.achievements.includes(a.id)) continue;
+      try { if (a.check(user)) { user.achievements.push(a.id); newly.push(a.id); } } catch (_) {}
+    }
+    return newly;
+  }
+
+  async function workEarn(userKey, amount, taps) {
     const amt = Number(amount);
-    if (!Number.isInteger(amt) || amt <= 0 || amt > 10) return { ok: false, error: 'Неверная сумма.' };
+    if (!Number.isInteger(amt) || amt <= 0 || amt > 20) return { ok: false, error: 'Неверная сумма.' };
+    const t = Number.isInteger(taps) && taps > 0 ? taps : 10;
     const key = normalizeNick(userKey);
     return withLatest(() => {
       const user = db.users[key];
@@ -474,12 +551,151 @@
       }
       if (!Number.isFinite(user.balance)) user.balance = 0;
       user.balance += amt;
+      user.totalEarned = (user.totalEarned || 0) + amt;
+      user.totalTaps = (user.totalTaps || 0) + t;
       user.lastWorkEarnAt = now;
       user.workEarnedThisHour = (user.workEarnedThisHour || 0) + amt;
+      ensureQuestsDay(user);
+      user.questsProgress.taps = (user.questsProgress.taps || 0) + t;
+      user.questsProgress.earned = (user.questsProgress.earned || 0) + amt;
       addHistory({ type: 'in', userKey: key, peer: 'работа', amount: amt, memo: 'Заработок в «Работе»' });
-      return { ok: true, amount: amt, balance: user.balance };
+      const newAch = checkAchievements(user);
+      return { ok: true, amount: amt, balance: user.balance, newAchievements: newAch };
     });
   }
+
+  async function buyWorkUpgrade(userKey) {
+    const key = normalizeNick(userKey);
+    return withLatest(() => {
+      const user = db.users[key];
+      if (!user || key === 'admin') return { ok: false, error: 'Профиль не найден.' };
+      if ((user.workLevel || 1) >= 5) return { ok: false, error: 'Максимальный уровень.' };
+      const cost = WORK_UPGRADE_COSTS[user.workLevel || 1];
+      if (user.balance < cost) return { ok: false, error: 'Недостаточно @.' };
+      user.balance -= cost;
+      user.workLevel = (user.workLevel || 1) + 1;
+      ensureQuestsDay(user);
+      user.questsProgress.upgrades = (user.questsProgress.upgrades || 0) + 1;
+      const newAch = checkAchievements(user);
+      addHistory({ type: 'out', userKey: key, peer: 'магазин', amount: cost, memo: 'Улучшение работы до уровня ' + user.workLevel });
+      return { ok: true, level: user.workLevel, cost, newAchievements: newAch };
+    });
+  }
+
+  async function playCoinFlip(userKey, amount, choice) {
+    const amt = Number(amount);
+    if (!Number.isInteger(amt) || amt < 1) return { ok: false, error: 'Неверная ставка.' };
+    const key = normalizeNick(userKey);
+    return withLatest(() => {
+      const user = db.users[key];
+      if (!user || key === 'admin') return { ok: false, error: 'Профиль не найден.' };
+      if (user.balance < amt) return { ok: false, error: 'Недостаточно @.' };
+      user.balance -= amt;
+      const result = Math.random() < 0.5 ? 'heads' : 'tails';
+      const win = result === choice;
+      let payout = 0;
+      if (win) { payout = Math.floor(amt * 1.9); user.balance += payout; user.gamesWon = (user.gamesWon||0)+1; if (payout > (user.biggestWin||0)) user.biggestWin = payout; }
+      user.gamesPlayed = (user.gamesPlayed||0)+1;
+      user.totalGambled = (user.totalGambled||0) + amt;
+      ensureQuestsDay(user);
+      user.questsProgress.games = (user.questsProgress.games||0)+1;
+      if (win) user.questsProgress.wins = (user.questsProgress.wins||0)+1;
+      const newAch = checkAchievements(user);
+      addHistory({ type: win ? 'in' : 'out', userKey: key, peer: 'казино', amount: win ? payout : amt, memo: (win ? 'Выигрыш в монетке' : 'Проигрыш в монетке') });
+      return { ok: true, result, win, payout, balance: user.balance, newAchievements: newAch };
+    });
+  }
+
+  async function playDice(userKey, amount, guess) {
+    const amt = Number(amount);
+    const g = Number(guess);
+    if (!Number.isInteger(amt) || amt < 1) return { ok: false, error: 'Неверная ставка.' };
+    if (!Number.isInteger(g) || g < 1 || g > 6) return { ok: false, error: 'Выбери число 1-6.' };
+    const key = normalizeNick(userKey);
+    return withLatest(() => {
+      const user = db.users[key];
+      if (!user || key === 'admin') return { ok: false, error: 'Профиль не найден.' };
+      if (user.balance < amt) return { ok: false, error: 'Недостаточно @.' };
+      user.balance -= amt;
+      const roll = 1 + Math.floor(Math.random() * 6);
+      const win = roll === g;
+      let payout = 0;
+      if (win) { payout = amt * 5; user.balance += payout; user.gamesWon = (user.gamesWon||0)+1; if (payout > (user.biggestWin||0)) user.biggestWin = payout; }
+      user.gamesPlayed = (user.gamesPlayed||0)+1;
+      user.totalGambled = (user.totalGambled||0) + amt;
+      ensureQuestsDay(user);
+      user.questsProgress.games = (user.questsProgress.games||0)+1;
+      if (win) user.questsProgress.wins = (user.questsProgress.wins||0)+1;
+      const newAch = checkAchievements(user);
+      addHistory({ type: win ? 'in' : 'out', userKey: key, peer: 'казино', amount: win ? payout : amt, memo: (win ? 'Выигрыш в кубике ('+roll+')' : 'Проигрыш в кубике (выпало '+roll+')') });
+      return { ok: true, roll, win, payout, balance: user.balance, newAchievements: newAch };
+    });
+  }
+
+  const QUEST_POOL = [
+    { id:'earn100', title:'Заработай 100 @ в работе', target:100, field:'earned', reward:50 },
+    { id:'taps50', title:'Сделай 50 тапов', target:50, field:'taps', reward:30 },
+    { id:'games5', title:'Сыграй 5 игр в казино', target:5, field:'games', reward:40 },
+    { id:'wins2', title:'Выиграй 2 раза в казино', target:2, field:'wins', reward:60 },
+    { id:'upgrade1', title:'Купи улучшение работы', target:1, field:'upgrades', reward:100 },
+    { id:'daily1', title:'Получи ежедневный бонус', target:1, field:'daily', reward:20 },
+    { id:'earn500', title:'Заработай 500 @ в работе', target:500, field:'earned', reward:150 },
+    { id:'games10', title:'Сыграй 10 игр в казино', target:10, field:'games', reward:80 }
+  ];
+
+  function getQuestsForDay(dayNum) {
+    const arr = QUEST_POOL.slice().sort((a,b) => {
+      const ha = (dayNum * 37 + a.id.charCodeAt(0)*13) % 997;
+      const hb = (dayNum * 37 + b.id.charCodeAt(0)*13) % 997;
+      return ha - hb;
+    });
+    return arr.slice(0, 3);
+  }
+
+  function getQuests(userKey) {
+    const key = normalizeNick(userKey);
+    const user = db.users[key];
+    if (!user) return { ok: false, error: 'Профиль не найден.' };
+    ensureQuestsDay(user);
+    const dayNum = Math.floor(Date.now() / DAY_MS);
+    const quests = getQuestsForDay(dayNum);
+    return {
+      ok: true,
+      quests: quests.map(q => ({
+        id: q.id,
+        title: q.title,
+        target: q.target,
+        progress: Math.min((user.questsProgress[q.field]||0), q.target),
+        reward: q.reward,
+        claimed: (user.questsClaimed||[]).includes(q.id)
+      }))
+    };
+  }
+
+  async function claimQuest(userKey, questId) {
+    const key = normalizeNick(userKey);
+    return withLatest(() => {
+      const user = db.users[key];
+      if (!user) return { ok: false, error: 'Профиль не найден.' };
+      ensureQuestsDay(user);
+      const dayNum = Math.floor(Date.now() / DAY_MS);
+      const quests = getQuestsForDay(dayNum);
+      const q = quests.find(x => x.id === questId);
+      if (!q) return { ok: false, error: 'Квест не найден.' };
+      if ((user.questsClaimed||[]).includes(q.id)) return { ok: false, error: 'Уже получен.' };
+      if ((user.questsProgress[q.field]||0) < q.target) return { ok: false, error: 'Квест не выполнен.' };
+      user.balance += q.reward;
+      user.totalEarned = (user.totalEarned||0) + q.reward;
+      if (!user.questsClaimed) user.questsClaimed = [];
+      user.questsClaimed.push(q.id);
+      const newAch = checkAchievements(user);
+      addHistory({ type:'in', userKey: key, peer:'квесты', amount: q.reward, memo: 'Награда за квест: ' + q.title });
+      return { ok: true, reward: q.reward, balance: user.balance, newAchievements: newAch };
+    });
+  }
+
+  // issueDaily update: increment dailyCount, quest progress daily
+  // patch issueDaily below via replace separately
 
   async function clearHistory(userKey) {
     const key = normalizeNick(userKey);
@@ -533,6 +749,17 @@
     setAvatar,
     setDailyEnabled,
     workEarn,
+    buyWorkUpgrade,
+    workRewardForLevel,
+    playCoinFlip,
+    playDice,
+    getQuests,
+    claimQuest,
+    getAchievements: (key) => {
+      const u = db.users[normalizeNick(key)];
+      return u ? (u.achievements||[]) : [];
+    },
+    ACHIEVEMENTS,
     exportData,
     importData,
     pull,
